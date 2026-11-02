@@ -15,7 +15,10 @@
     "prompt": "anchor_ai/prompts.py",
     "model": "config/model_releases.yml",
     "index": "config/retrieval.yml",
-    "incident": "eval/datasets/failover_budget_incident.jsonl"
+    "incident": "eval/datasets/failover_budget_incident.jsonl",
+    "security_cases": "eval/datasets/security_regression_cases.jsonl",
+    "security_suite": "eval/adversarial_prompts.yml",
+    "security_gate": "eval/redteam_gate.py"
   },
   "quarantine": {},
   "required_upstream": ["candidate", "golden", "calibration", "trajectory", "regression", "accumulated"]

@@ -83,6 +83,8 @@ jobs:
       ANCHOR_ORCHESTRATION_RELEASE_ADAPTER: ${{ vars.ANCHOR_ORCHESTRATION_RELEASE_ADAPTER }}
       ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS: ${{ vars.ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS }}
       ANCHOR_REALTIME_RELEASE_EVIDENCE: ${{ vars.ANCHOR_REALTIME_RELEASE_EVIDENCE }}
+      ANCHOR_REDTEAM_ADAPTER: ${{ vars.ANCHOR_REDTEAM_ADAPTER }}
+      ANCHOR_REDTEAM_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,6 +101,10 @@ jobs:
       - run: bin/rails db:prepare
       - run: bin/rails test
       - run: python -m pytest -q anchor_ai/tests
+      - name: Security harness offline integration
+        run: ruby test/integration/redteam_harness_test.rb
+      - name: Candidate endpoint security gate
+        run: python -m eval.redteam_gate --release
       - run: python eval/retrieval_gate.py
       - run: python eval/rag_gate.py
       - run: python eval/agent_gate.py

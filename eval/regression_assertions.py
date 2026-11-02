@@ -36,6 +36,16 @@ def get_assert(output, context):
             'reason': name + ': ' + str(passed)}
 
 
+def security_assert(evidence, context):
+    """Structured evidence assertion; output text alone is insufficient."""
+    from eval.trajectory_eval import require_security_state
+    try:
+        require_security_state(context['case'], evidence)
+        return {'pass': True, 'score': 1.0, 'reason': 'security_state_pass'}
+    except (ValueError, KeyError, TypeError):
+        return {'pass': False, 'score': 0.0, 'reason': 'security_state_failed'}
+
+
 def rubric_assert(output, context):
     # A fixture rubric is deliberately not represented as a measured judge call.
     safe = results(output, context['vars']['expected'])['checks']['safety']

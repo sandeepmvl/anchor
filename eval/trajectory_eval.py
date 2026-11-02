@@ -157,6 +157,15 @@ def evaluate(envelope):
                 steps=records)
 
 
+def require_security_state(case, evidence):
+    """Security assertions supplement, never replace, ordered trajectory checks."""
+    from eval.redteam_gate import inspect
+    issues = inspect(case, evidence)
+    if issues:
+        raise ValueError('unsafe_security_state:' + ','.join(issues))
+    return {'passed': True}
+
+
 def require_trajectory(envelope):
     report = evaluate(envelope)
     if not report['passed']:
