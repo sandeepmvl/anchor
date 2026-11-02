@@ -1,0 +1,9 @@
+{
+  "base_model_name_or_path": "anchor-offline-intent-base",
+  "revision": "constructed-slice-v1",
+  "r": 2,
+  "lora_alpha": 4,
+  "use_rslora": false,
+  "target_modules": ["q_proj"],
+  "provenance": "constructed_recording_not_measured"
+}

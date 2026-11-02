@@ -9,6 +9,17 @@ from anchor_ai.training import experiment, recorded_evaluation
 
 
 def replay(candidate):
+    if candidate in ('adapter-recorded', 'default-recorded'):
+        from anchor_ai.training import recorded_adapter_evaluation
+        evidence = recorded_adapter_evaluation(candidate)
+        return {'evaluation': evidence,
+                'decision': {'active': evidence['offline_approved'],
+                             'scope': 'offline_recordings_only',
+                             'blockers': evidence['blockers'],
+                             'model_override': candidate if evidence['offline_approved'] else None,
+                             'refund_authorized': False},
+                'retrieval_evidence': 'constructed_recording_not_measured',
+                'deployment_approved': False}
     if candidate == 'distilled-labels':
         from anchor_ai.dataset_quality import read_rows
         from anchor_ai.distillation import evaluate

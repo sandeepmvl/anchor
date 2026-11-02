@@ -31,6 +31,12 @@ jobs:
           python bin/train_sft.py --offline --config config/fine_tuning.yml
           python bin/analyze_loss.py --log eval/finetune/fixtures/sft_epochs8.jsonl
           python eval/model_gate.py --offline --candidate sft-recorded
+      - name: Adapter arithmetic and offline release lifecycle
+        run: |
+          python labs/adapter-merging/merge_adapter.py --fixture eval/finetune/fixtures/qlora-adapter
+          python eval/model_gate.py --offline --candidate adapter-recorded
+          python ops/deploy/model_release.py --offline --promote adapter-recorded
+          python ops/deploy/model_release.py --offline --rollback
       - name: Document-level dense versus hybrid benchmark
         run: python -m eval.retrieval_eval --details
       - name: Fresh endpoint parity

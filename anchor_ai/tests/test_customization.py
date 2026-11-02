@@ -60,3 +60,9 @@ def test_recommendations_have_no_execution_side_effects():
         assert result['advisory_only'] is True
         assert result['refund_authorized'] is False
         assert result['model_override'] is None
+
+
+def test_model_release_pinning_promotion_and_rollback(tmp_path):
+    import runpy
+    helper = Path(__file__).resolve().parents[2] / 'labs/adapter-merging/release_checks.py'
+    runpy.run_path(str(helper))['check_selection'](tmp_path)

@@ -154,3 +154,13 @@ def distillation_decision(teacher, student, route, spec):
                  'estimated_usd_per_ticket': student['estimated_usd_per_ticket']}),
             'advisory_only': True, 'deployment_approved': False,
             'refund_authorized': False, 'model_override': None}
+
+
+def model_release_selection(state=None):
+    from ops.deploy.model_release import STATE, pin_release
+    return pin_release(STATE if state is None else state)
+
+
+def model_release_transition(candidate=None, rollback=False, state=None):
+    from ops.deploy.model_release import STATE, transition
+    return transition(candidate, rollback, STATE if state is None else state)

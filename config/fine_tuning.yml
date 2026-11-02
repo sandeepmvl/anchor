@@ -120,3 +120,11 @@ distillation:
   enabled: false
   permitted_tasks: [intent, tone]
   training_release: false
+
+model_release:
+  manifest: config/model_releases.yml
+  default: lora
+  reason: compact versioned updates; shared-base switching; supported standalone fold
+  evidence_source: constructed_recording_not_measured
+  live_deployment_enabled: false
+  alternate_families: [dora, bottleneck, soft_prompt, ia3]

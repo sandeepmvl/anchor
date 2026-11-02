@@ -173,6 +173,13 @@ class LiveProvider:
 def configured_provider():
     mode = os.environ.get('ANCHOR_LLM_MODE', 'offline')
     if mode == 'offline':
+        state = os.environ.get('ANCHOR_MODEL_RELEASE_STATE')
+        if state:
+            try:
+                from anchor_ai.customization import model_release_selection
+                return ModelReleaseReplayProvider(model_release_selection(state))
+            except (ValueError, KeyError, OSError):
+                raise ProviderError('invalid_model_release', status=503) from None
         return ReplayProvider(os.environ.get('ANCHOR_LLM_FIXTURE', '200'))
     if mode == 'live':
         return LiveProvider()
@@ -229,6 +236,15 @@ class Delta:
 
 
 async def stream_tokens(provider, message):
+    if isinstance(provider, ModelReleaseReplayProvider):
+        ticket = str(message)
+        if ticket != provider.selection.ticket:
+            raise ProviderError('replay_miss')
+        text = provider.selection.complete(ticket)
+        for start in range(0, len(text), 16):
+            yield Delta(text=text[start:start + 16])
+        yield Delta(stop='stop')
+        return
     if isinstance(provider, ContextReplayProvider):
         text = provider.context_reply({'messages': message.context_messages})
         for start in range(0, len(text), 16):
@@ -321,3 +337,17 @@ class ContextReplayProvider:
 
     def client(self):
         return httpx.AsyncClient(transport=httpx.MockTransport(self.send), trust_env=False)
+
+
+class ModelReleaseReplayProvider(ReplayProvider):
+    def __init__(self, selection):
+        self.selection = selection
+        self.expected_messages = [{'role': 'user', 'content': selection.ticket}]
+        self.expected_reasoning = None
+        self.expected_format = None
+        self.fixture_latency_ms = None
+        self.requests = []
+        self.sequence = [{'status': 200, 'body': {
+            'model': selection.candidate,
+            'choices': [{'message': {'content': selection.reply}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 15, 'total_tokens': 20}}}]

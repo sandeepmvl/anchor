@@ -296,3 +296,8 @@ def distillation_manifest(rows, policy=None, balanced=False):
             'excluded_tasks': ['policy_answering', 'tool_authorization', 'generation'],
             'training_release': False, 'deployment_approved': False,
             'split_audit': 'family and exact checks; human near-duplicate review still required'}
+
+
+def recorded_adapter_evaluation(candidate='adapter-recorded', manifest_path=None):
+    from anchor_ai.adapters import MANIFEST, evaluate_release
+    return evaluate_release(candidate, MANIFEST if manifest_path is None else manifest_path)
