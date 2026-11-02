@@ -1,0 +1,8 @@
+{"epoch":1,"train_loss":1.2,"val_loss":1.25,"source":"constructed_recording_not_measured"}
+{"epoch":2,"train_loss":0.9,"val_loss":0.98,"source":"constructed_recording_not_measured"}
+{"epoch":3,"train_loss":0.65,"val_loss":0.82,"source":"constructed_recording_not_measured"}
+{"epoch":4,"train_loss":0.48,"val_loss":0.88,"source":"constructed_recording_not_measured"}
+{"epoch":5,"train_loss":0.36,"val_loss":0.96,"source":"constructed_recording_not_measured"}
+{"epoch":6,"train_loss":0.27,"val_loss":1.05,"source":"constructed_recording_not_measured"}
+{"epoch":7,"train_loss":0.2,"val_loss":1.14,"source":"constructed_recording_not_measured"}
+{"epoch":8,"train_loss":0.15,"val_loss":1.23,"source":"constructed_recording_not_measured"}

@@ -26,6 +26,11 @@ jobs:
         run: python -m pytest -q anchor_ai/tests
       - name: Versioned offline retrieval gate
         run: python eval/retrieval_gate.py
+      - name: SFT experiment and recorded evidence contract
+        run: |
+          python bin/train_sft.py --offline --config config/fine_tuning.yml
+          python bin/analyze_loss.py --log eval/finetune/fixtures/sft_epochs8.jsonl
+          python eval/model_gate.py --offline --candidate sft-recorded
       - name: Document-level dense versus hybrid benchmark
         run: python -m eval.retrieval_eval --details
       - name: Fresh endpoint parity

@@ -48,3 +48,37 @@ synthetic:
   approved_outputs:
     refund_review: We will send this request for human review.
     refund_decline: We cannot approve this request under the reviewed criteria.
+
+sft:
+  evidence_source: constructed_recording_not_measured
+  candidate: sft-recorded
+  base_model: Qwen/Qwen2.5-0.5B-Instruct
+  base_revision: recorded-teaching-revision
+  tokenizer_revision: recorded-teaching-revision
+  chat_template: recorded-user-assistant-v1
+  settings:
+    full_parameter: true
+    optimizer: AdamW
+    learning_rate: 0.00002
+    sequence_length: 512
+    micro_batch_size: 1
+    gradient_accumulation_steps: 8
+    gradient_checkpointing: true
+    epochs: 8
+    eval_strategy: epoch
+    save_strategy: epoch
+    completion_only_loss: true
+    parameter_count: 500000000
+    bytes_per_parameter: 16
+    gpu_budget_bytes: 16000000000
+  loss_log: eval/finetune/fixtures/sft_epochs8.jsonl
+  heldout_replies: eval/finetune/fixtures/sft_heldout_replies.jsonl
+  acceptance:
+    min_quality: 1.0
+    max_critical_failures: 0
+  recorded_rows:
+    - {id: t1, family: train-return, split: train, source: curated, status: recorded_approved, input: 'Unopened return at 20 days; policy permits 30 days.', output: 'Within the window. Please provide your order reference.'}
+    - {id: t2, family: train-return, split: train, source: synthetic, status: recorded_accepted, seed_id: t1, input: 'Still sealed after twenty days; policy permits thirty days.', output: 'Within the window. Please provide your order reference.'}
+    - {id: v1, family: validation-decline, split: validation, source: curated, status: recorded_approved, input: 'Opened return at 70 days; policy permits unopened items within 30 days.', output: 'This does not meet the stated criteria. We can request human review.'}
+    - {id: h1, family: heldout-return, split: held_out, source: curated, status: recorded_approved, input: 'Sealed item at 12 days; current policy allows unopened returns within 30 days.', output: 'Within the window. Please provide your order reference.'}
+    - {id: h2, family: heldout-review, split: held_out, source: curated, status: recorded_approved, input: 'Opened item at 45 days; policy permits unopened returns within 30 days.', output: 'This is outside the stated criteria. We can request human review.'}

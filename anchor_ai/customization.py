@@ -102,3 +102,39 @@ def synthetic_batch_decision(generated, rejected, real, existing_synthetic,
             'within_bands': within,
             'decision': 'eligible_for_review' if within else 'hold',
             'merged': False, 'training_release': False}
+
+
+def sft_activation_decision(manifest, evaluation=None, retrieval=None, checkpoint=None):
+    """Consume trusted internal evaluator results, never a customer request body."""
+    evaluation = evaluation or {}
+    retrieval = retrieval or {}
+    selected = manifest['selection']['selected_checkpoint']
+    checkpoint = selected if checkpoint is None else checkpoint
+    checks = {
+        'validation_selected_checkpoint': checkpoint == selected,
+        'training_release': manifest.get('training_release') is True,
+        'measured_experiment': manifest.get('evidence_status') == 'measured',
+        'matching_dataset_lineage': evaluation.get('lineage') == manifest['lineage'],
+        'matching_experiment': evaluation.get('experiment_id') == manifest['experiment_id'],
+        'matching_candidate': evaluation.get('candidate') == manifest['candidate'],
+        'matching_checkpoint': evaluation.get('checkpoint') == checkpoint,
+        'held_out_evidence': (
+            evaluation.get('heldout_digest') == manifest['lineage']['held_out']
+            and bool(evaluation.get('reply_digest'))),
+        'measured_held_out_evidence': evaluation.get('source') == 'measured',
+        'held_out_quality_and_safety': evaluation.get('passed') is True,
+        'existing_retrieval_regression_gate': (
+            retrieval.get('gate') == 'existing_retrieval_regression'
+            and retrieval.get('passed') is True
+            and retrieval.get('candidate') == manifest['candidate']
+            and retrieval.get('experiment_id') == manifest['experiment_id']
+            and retrieval.get('checkpoint') == checkpoint
+            and bool(retrieval.get('artifact_digest'))),
+    }
+    blockers = [name for name, passed in checks.items() if not passed]
+    active = not blockers
+    return {'candidate': manifest['candidate'], 'requested_checkpoint': checkpoint,
+            'selected_checkpoint': selected, 'evidence_status': manifest['evidence_status'],
+            'active': active, 'blockers': blockers,
+            'model_override': checkpoint if active else None,
+            'refund_authorized': False}
