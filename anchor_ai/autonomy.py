@@ -4,11 +4,10 @@ import json
 import secrets
 import time
 from pathlib import Path
-
 import yaml
 from pydantic import ValidationError
-
 from .observability import span
+from .escalation import risk_rule
 
 
 def load_policy():
@@ -21,8 +20,7 @@ def load_policy():
 
 def fingerprint(scope, name, arguments):
     value = [scope.tenant_id, scope.role, name, arguments]
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
-                                     allow_nan=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
 class ExecutionRun:
@@ -50,6 +48,11 @@ class ExecutionRun:
         self.confirmations = {}
         self.approvals = {}
         self.events = []
+        self.escalation = None
+        self.review_context = None
+        self.review_policy_match = True
+        self.review_grants = set()
+        self.paused = None
 
     def matches(self, scope):
         return self.identity == (scope.tenant_id, scope.conversation_id, scope.role)
@@ -67,17 +70,15 @@ class ExecutionRun:
         if not self.matches(scope):
             raise ValueError('invalid_confirmation_context')
         bound = fingerprint(scope, call.name, arguments)
-        if (self.confirmations.get(confirmation) != bound
-                or not isinstance(idempotency_key, str)
+        if (self.confirmations.get(confirmation) != bound or not isinstance(idempotency_key, str)
                 or not 8 <= len(idempotency_key) <= 200):
             raise ValueError('invalid_confirmation')
         self.approvals[bound] = (confirmation, idempotency_key)
 
     def denied(self, scope, reason):
         self.halted = True
-        event = {'event': 'policy_denied', 'reason': reason,
-                 'tenant_id': scope.tenant_id, 'calls': self.calls,
-                 'reserved_cost_units': self.cost}
+        event = {'event': 'policy_denied', 'reason': reason, 'tenant_id': scope.tenant_id,
+                 'calls': self.calls, 'reserved_cost_units': self.cost}
         self.events.append(event)
         with span('python.autonomy', stage='tool', tenant_id=scope.tenant_id,
                   tool_calls=self.calls, agent_exit=reason) as operation:
@@ -88,6 +89,8 @@ class ExecutionRun:
         async with self.lock:
             if not self.matches(scope):
                 return self.denied(scope, 'scope_denied')[0]
+            if self.paused is not None:
+                return 'review_required'
             if self.halted:
                 return 'run_halted'
             if self.clock() >= self.deadline:
@@ -101,6 +104,8 @@ class ExecutionRun:
         async with self.lock:
             if not self.matches(scope):
                 return self.denied(scope, 'scope_denied')
+            if self.paused is not None:
+                return 'review_required', None
             if self.halted:
                 return 'run_halted', None
             if self.clock() >= self.deadline:
@@ -118,7 +123,8 @@ class ExecutionRun:
             key = None
             if spec['mode'] == 'approval':
                 amount = arguments.get('amount_cents')
-                if type(amount) is not int or not 0 < amount <= tenant['refund_ceiling_cents']:
+                reviewed = fingerprint(scope, name, arguments) in self.review_grants
+                if type(amount) is not int or amount <= 0 or (amount > tenant['refund_ceiling_cents'] and not reviewed):
                     return self.denied(scope, 'argument_policy')
                 if not self.dry_run:
                     bound = fingerprint(scope, name, arguments)
@@ -130,10 +136,8 @@ class ExecutionRun:
             if self.cost + estimated > self.max_cost:
                 return self.denied(scope, 'cost_budget')
             self.cost += estimated
-            self.events.append({'event': 'policy_allowed', 'calls': self.calls,
-                                'reserved_cost_units': self.cost})
-            with span('python.autonomy', stage='tool',
-                      tenant_id=scope.tenant_id, tool_calls=self.calls):
+            self.events.append({'event': 'policy_allowed', 'calls': self.calls, 'reserved_cost_units': self.cost})
+            with span('python.autonomy', stage='tool', tenant_id=scope.tenant_id, tool_calls=self.calls):
                 pass
             return None, key
 
@@ -153,7 +157,6 @@ def run_for(scope, run=None):
 async def guarded_dispatch(call, registry, scope, execute, run=None):
     state = run_for(scope, run)
     tool = registry.get(call.name)
-    # Unknown/unlisted names are rejected without parsing or echoing their input.
     tenant = state.policy['tenants'].get(scope.tenant_id, {})
     if call.name not in tenant.get('roles', {}).get(scope.role, []) or tool is None:
         error, _ = await state.admit(scope, call.name, {})
@@ -166,6 +169,17 @@ async def guarded_dispatch(call, registry, scope, execute, run=None):
             error, _ = state.denied(scope, 'invalid_arguments')
         return {'call_id': call.call_id, 'payload': {'ok': False, 'error': error}}
     owns = tool.authorize(scope, arguments) if tool.authorize else True
+    spec = state.policy['tools'].get(call.name, {})
+    if (state.escalation is not None and spec.get('mode') == 'approval'
+            and 'amount_cents' in arguments and owns and not state.dry_run):
+        async with state.lock:
+            if (state.matches(scope) and not state.halted and state.paused is None
+                    and state.clock() < state.deadline and state.calls < state.max_calls
+                    and state.cost + spec['cost_units'] <= state.max_cost):
+                risk = risk_rule(arguments['amount_cents'], tenant['refund_ceiling_cents'],
+                                 state.review_policy_match)
+                if risk['escalate']:
+                    return state.escalation.pause(scope, state, call, arguments, risk)
     error, key = await state.admit(scope, call.name, arguments, owns=owns)
     if error:
         return {'call_id': call.call_id, 'payload': {'ok': False, 'error': error}}

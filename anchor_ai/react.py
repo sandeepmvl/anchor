@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-
 from anchor_ai.agentic_rag import ABSTENTION, AgenticRuntime
 from anchor_ai.context import agent_memory_prompt
 from anchor_ai.autonomy import run_for
@@ -9,6 +8,7 @@ from anchor_ai.contracts import ToolScope
 from anchor_ai.observability import AGENT_SUMMARIES, emit_react, span
 from anchor_ai.schemas import AgentDecision, ReActContent, RetrieveArguments
 from anchor_ai.schemas import normalize_retrieval_query
+from anchor_ai.escalation import context_bundle, redact
 
 
 class NativePolicyAdapter:
@@ -23,15 +23,12 @@ class NativePolicyAdapter:
             if message['role'] == 'tool':
                 for passage in json.loads(message['content'])['passages']:
                     evidence[passage['id']] = passage
-        decision = AgentDecision.model_validate(
-            await self.policy.decide(question, list(evidence.values())))
+        decision = AgentDecision.model_validate(await self.policy.decide(question, list(evidence.values())))
         payload = {'reasoning': AGENT_SUMMARIES[decision.kind]}
         message = {'role': 'assistant'}
         if decision.kind == 'retrieve':
-            message['tool_calls'] = [{
-                'id': 'call_' + str(len(messages)), 'type': 'function',
-                'function': {'name': 'retrieve', 'arguments':
-                             json.dumps(decision.arguments.model_dump())}}]
+            message['tool_calls'] = [{'id': 'call_' + str(len(messages)), 'type': 'function',
+                'function': {'name': 'retrieve', 'arguments': json.dumps(decision.arguments.model_dump())}}]
         else:
             payload['final'] = decision.answer.model_dump()
         message['content'] = json.dumps(payload)
@@ -40,8 +37,7 @@ class NativePolicyAdapter:
 
 class ReActRuntime(AgenticRuntime):
     """Read-only ReAct strategy; consequential tools are not enabled here."""
-    def __init__(self, retriever, *, native_client=None, detect_cycles=True,
-                 memory=None, **kwargs):
+    def __init__(self, retriever, *, native_client=None, detect_cycles=True, memory=None, **kwargs):
         super().__init__(retriever, **kwargs)
         self.memory = memory
         self.native_client = native_client or NativePolicyAdapter(self.policy)
@@ -73,8 +69,7 @@ class ReActRuntime(AgenticRuntime):
         self.last_trajectory = []
         self.last_exit = None
         ctx = {'request_id': request_id, 'trace_id': trace_id, 'parent_span_id': None}
-        with span('python.react', ctx=ctx, stage='agent',
-                  tenant_id=scope.tenant_id, agent_mode=self.mode) as root:
+        with span('python.react', ctx=ctx, stage='agent', tenant_id=scope.tenant_id, agent_mode=self.mode) as root:
             def record(event, **fields):
                 def export(row):
                     self.last_trajectory.append(row)
@@ -85,26 +80,25 @@ class ReActRuntime(AgenticRuntime):
                 state.halted = True
                 self.last_exit = reason
                 if self.memory is not None:
-                    self.memory.log_episode(scope.tenant_id, scope.conversation_id,
-                                            'react exit=' + reason + ' tool_calls=' + str(calls))
+                    self.memory.log_episode(scope.tenant_id, scope.conversation_id, 'react exit=' + reason + ' tool_calls=' + str(calls))
                 result = answer or {'reply': ABSTENTION, 'citations': [], 'abstained': True}
-                root.set(agent_exit=reason, tool_calls=calls,
-                         evidence_chunk_ids=sorted(evidence),
+                root.set(agent_exit=reason, tool_calls=calls, evidence_chunk_ids=sorted(evidence),
                          citations=result['citations'], abstained=result['abstained'])
-                record('exit', agent_exit=reason, tool_calls=calls,
-                       evidence_chunk_ids=sorted(evidence))
+                record('exit', agent_exit=reason, tool_calls=calls, evidence_chunk_ids=sorted(evidence))
                 return result
 
             for iteration in range(1, self.max_iterations + 1):
                 reason = await state.step(scope)
                 if reason:
                     return finish(reason)
-                with span('python.react.model', stage='llm',
-                          agent_iteration=iteration,
+                state.review_context = context_bundle(messages, list(evidence.values()),
+                    {'strategy': 'react', 'iteration': iteration},
+                    {'calls': state.max_calls - state.calls, 'steps': state.max_steps - state.steps,
+                     'cost_units': state.max_cost - state.cost}, 'Selecting the next bounded action.')
+                with span('python.react.model', stage='llm', agent_iteration=iteration,
                           iterations_remaining=self.max_iterations - iteration) as model_span:
                     try:
-                        message = await asyncio.wait_for(
-                            self.native_client.complete(messages), self.policy_timeout)
+                        message = await asyncio.wait_for(self.native_client.complete(messages), self.policy_timeout)
                         if message['role'] != 'assistant':
                             raise ValueError('invalid_role')
                         content = ReActContent.model_validate_json(message['content'])
@@ -130,20 +124,17 @@ class ReActRuntime(AgenticRuntime):
                         model_span.fail('invalid_provider_response')
                         return finish('policy_error')
                     model_span.set(decision_summary=content.reasoning)
-                record('decision_summary', agent_iteration=iteration,
-                       decision_summary=content.reasoning, tool_calls=calls)
+                record('decision_summary', agent_iteration=iteration, decision_summary=content.reasoning, tool_calls=calls)
                 if not proposed:
                     answer = content.final.model_dump()
                     citations = answer['citations']
-                    if (len(citations) != len(set(citations))
-                            or any(type(i) is not int or i not in evidence for i in citations)
+                    if (len(citations) != len(set(citations)) or any(type(i) is not int or i not in evidence for i in citations)
                             or (not answer['abstained'] and not citations)):
                         return finish('invalid_answer')
                     return finish('final_answer', answer)
                 normalized = normalize_retrieval_query(args.query)
                 fingerprint = hashlib.sha256(('retrieve:' + normalized).encode()).hexdigest()
-                record('action', agent_iteration=iteration, tool_name='retrieve',
-                       query_fingerprint=fingerprint, tool_calls=calls)
+                record('action', agent_iteration=iteration, tool_name='retrieve', query_fingerprint=fingerprint, tool_calls=calls)
                 if self.detect_cycles and fingerprint in signatures:
                     return finish('repeated_action')
                 if calls >= self.max_tool_calls:
@@ -156,9 +147,8 @@ class ReActRuntime(AgenticRuntime):
                 signatures.add(fingerprint)
                 call_ids.add(call_id)
                 calls += 1
-                with span('python.react.tool', stage='tool', tool_name='retrieve',
-                          agent_iteration=iteration, query_fingerprint=fingerprint,
-                          tool_calls=calls) as tool_span:
+                with span('python.react.tool', stage='tool', tool_name='retrieve', agent_iteration=iteration,
+                          query_fingerprint=fingerprint, tool_calls=calls) as tool_span:
                     try:
                         observation = await self.tool(args.model_dump(), k)
                     except Exception:
@@ -170,13 +160,29 @@ class ReActRuntime(AgenticRuntime):
                     size = len(json.dumps(list(candidate.values()), ensure_ascii=False).encode('utf-8'))
                     if size <= self.evidence_budget:
                         evidence = candidate
-                # Send only retained evidence to the next invocation. Bound the
-                # transcript by iteration count and the existing evidence cap.
-                retained = {'passages': [p for p in observation['passages']
-                                         if p['id'] in evidence]}
-                messages.extend([message, {'role': 'tool', 'tool_call_id': call_id,
-                                          'content': json.dumps(retained)}])
-                record('observation', agent_iteration=iteration, tool_name='retrieve',
-                       tool_calls=calls, evidence_chunk_ids=sorted(evidence),
-                       observation_redacted=True)
+                retained = {'passages': [p for p in observation['passages'] if p['id'] in evidence]}
+                messages.extend([message, {'role': 'tool', 'tool_call_id': call_id, 'content': json.dumps(retained)}])
+                record('observation', agent_iteration=iteration, tool_name='retrieve', tool_calls=calls,
+                       evidence_chunk_ids=sorted(evidence), observation_redacted=True)
             return finish('iteration_budget')
+
+
+def resume_review_observation(saved, observation):
+    """Terminal continuation for the exact saved refund; never re-propose it."""
+    call = saved['pending_tool_call']
+    messages = list(saved['loop']['messages'])
+    messages.append({'role': 'tool', 'tool_call_id': call['call_id'],
+                     'content': json.dumps(redact(observation))})
+    rejected = observation.get('error') == 'review_rejected'
+    if rejected:
+        if not observation.get('do_not_retry'):
+            raise ValueError('rejection_requires_no_retry')
+        reply = 'Your refund was not issued. A human reviewer declined it: ' + observation['reason']
+    elif observation.get('ok'):
+        reply = 'Your refund has been issued after review.'
+    else:
+        reply = 'Your refund was not issued automatically. A support specialist will follow up.'
+    messages.append({'role': 'assistant', 'content': reply})
+    return redact({'reply': reply, 'citations': [], 'abstained': not observation.get('ok', False),
+                   'human_handoff': not observation.get('ok', False), 'messages': messages,
+                   'pending_tool_call': None, 'next_step': 'done'})

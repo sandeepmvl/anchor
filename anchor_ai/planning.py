@@ -7,11 +7,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
-
 import yaml
-
 from anchor_ai.schemas import AccountExecutionScope, AccountObservation, AccountPlan
 from anchor_ai.context import agent_memory_prompt
+from anchor_ai.escalation import context_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / 'tests/fixtures/account_change_plan.json'
@@ -44,13 +43,12 @@ class PlanningRun:
     completed: dict = field(default_factory=dict)
     attempted: dict = field(default_factory=dict)
     halted: bool = False
+    review_context: dict | None = None
 
     def snapshot(self):
-        return copy.deepcopy({
-            'steps': self.steps, 'calls': self.calls, 'cost_units': self.cost_units,
+        return copy.deepcopy({'steps': self.steps, 'calls': self.calls, 'cost_units': self.cost_units,
             'planning_calls': self.planning_calls, 'replans': self.replans,
-            'completed': self.completed, 'attempted': self.attempted,
-        })
+            'completed': self.completed, 'attempted': self.attempted})
 
 
 class RecordedPlanner:
@@ -69,12 +67,9 @@ class LivePlanner:
         self.client = LlmClient()
 
     async def plan(self, ticket, ledger, reason=None):
-        raw = await self.client.complete(json.dumps({
-            'ticket': ticket, 'ledger': ledger, 'reason': reason,
-            'schema': AccountPlan.model_json_schema(),
-            'allowed_tools': sorted(ACCOUNT_TOOLS),
-        }), system='Return only an account plan. Never replay attempted actions.',
-            max_tokens=1024)
+        raw = await self.client.complete(json.dumps({'ticket': ticket, 'ledger': ledger, 'reason': reason,
+            'schema': AccountPlan.model_json_schema(), 'allowed_tools': sorted(ACCOUNT_TOOLS)}),
+            system='Return only an account plan. Never replay attempted actions.', max_tokens=1024)
         return json.loads(raw)
 
 
@@ -90,17 +85,15 @@ class OfflineAccountBackend:
     async def dispatch(self, scope, step, operation_id, *, dry_run=False):
         if operation_id in self.receipts and not dry_run:
             return self.receipts[operation_id]
-        self.log.append({'tool': step.tool, 'action_id': step.action_id,
-                         'tenant_id': scope.tenant_id, 'operation_id': operation_id,
-                         'dry_run': dry_run})
+        self.log.append({'tool': step.tool, 'action_id': step.action_id, 'tenant_id': scope.tenant_id,
+                         'operation_id': operation_id, 'dry_run': dry_run})
         if dry_run:
             return {'ok': True}
         if step.tool == 'verify_identity':
             result = {'ok': True, 'account': 'closed' if self.scenario == 'closed' else 'open'}
         elif step.tool == 'update_address':
-            result = ({'ok': False, 'reason': 'write_rejected_no_change'}
-                      if self.scenario == 'failure' else
-                      {'ok': True, 'receipt': operation_id, 'undo_token': 'undo:' + operation_id})
+            result = ({'ok': False, 'reason': 'write_rejected_no_change'} if self.scenario == 'failure'
+                      else {'ok': True, 'receipt': operation_id, 'undo_token': 'undo:' + operation_id})
         else:
             result = {'ok': True}
         self.receipts[operation_id] = result
@@ -124,7 +117,6 @@ def validate_plan(raw, state, config):
         if any(dep not in nodes and dep not in state.completed for dep in step.requires):
             raise ValueError('unknown_prerequisite')
     visiting, visited, ordered = set(), set(), []
-
     def visit(action_id):
         if action_id in visiting:
             raise ValueError('cyclic_plan')
@@ -136,7 +128,6 @@ def validate_plan(raw, state, config):
         visiting.remove(action_id)
         visited.add(action_id)
         ordered.append(nodes[action_id])
-
     for action_id in nodes:
         visit(action_id)
     return ordered
@@ -184,8 +175,7 @@ class PlanExecuteRuntime:
     async def request_plan(self, ticket, state, reason=None):
         self.reserve(state)
         ticket = agent_memory_prompt(ticket, self.memory, state.scope)
-        raw = await asyncio.wait_for(
-            self.planner.plan(ticket, state.snapshot(), reason), PLANNER_TIMEOUT_SECONDS)
+        raw = await asyncio.wait_for(self.planner.plan(ticket, state.snapshot(), reason), PLANNER_TIMEOUT_SECONDS)
         return validate_plan(raw, state, self.config)
 
     @staticmethod
@@ -194,17 +184,13 @@ class PlanExecuteRuntime:
         if len(results) != len(step.requires) or any(not r['result']['ok'] for r in results):
             return False
         if step.tool == 'update_address':
-            return any(r['tool'] == 'verify_identity' and
-                       r['result'].get('account') == 'open' for r in results)
+            return any(r['tool'] == 'verify_identity' and r['result'].get('account') == 'open' for r in results)
         if step.tool == 'confirm_change':
-            return any(r['tool'] == 'update_address' and
-                       r['result'].get('receipt') and r['result'].get('undo_token')
-                       for r in results)
+            return any(r['tool'] == 'update_address' and r['result'].get('receipt') and r['result'].get('undo_token') for r in results)
         return True
 
     async def answer(self, question, k=3, *, request_id, trace_id,
-                     execution_scope, execution_run=None, approved_changes=(),
-                     dry_run=False):
+                     execution_scope, execution_run=None, approved_changes=(), dry_run=False):
         scope = AccountExecutionScope.model_validate(execution_scope)
         if scope.tenant_id != self.tenant_id:
             raise ValueError('agent_scope_mismatch')
@@ -218,26 +204,28 @@ class PlanExecuteRuntime:
         self.last_run = state
         self.last_trajectory = []
         approvals = frozenset(approved_changes)
-
         def record(event, **fields):
-            self.last_trajectory.append({'event': event, 'request_id': request_id,
-                                         'trace_id': trace_id, **fields})
-
+            self.last_trajectory.append({'event': event, 'request_id': request_id, 'trace_id': trace_id, **fields})
         def finish(reason):
             state.halted = True
             if self.memory is not None:
-                self.memory.log_episode(scope.tenant_id, scope.conversation_id,
-                                        'planning exit=' + reason + ' tool_calls=' + str(state.calls))
+                self.memory.log_episode(scope.tenant_id, scope.conversation_id, 'planning exit=' + reason + ' tool_calls=' + str(state.calls))
             record('exit', reason=reason, ledger=state.snapshot())
             confirmed = any(r['tool'] == 'confirm_change' for r in state.completed.values())
             return {'reply': 'Address changed.' if confirmed else 'Address change blocked or unconfirmed.',
                     'citations': [], 'abstained': not confirmed}
-
         try:
             pending = await self.request_plan(question, state)
             record('plan', actions=[s.action_id for s in pending])
             while pending:
                 step = pending.pop(0)
+                limits = self.config['run']
+                state.review_context = context_bundle([{'role': 'user', 'content': question}],
+                    list(state.completed.values()),
+                    {'strategy': 'planning', 'action_id': step.action_id,
+                     'remaining_actions': [s.model_dump() for s in pending], 'ledger': state.snapshot()},
+                    {'calls': limits['max_calls'] - state.calls, 'steps': limits['max_steps'] - state.steps,
+                     'cost_units': limits['max_cost_units'] - state.cost_units}, 'Checking action prerequisites and authority.')
                 reason = None
                 if not self.evidence(step, state):
                     reason = 'invalid_prerequisite'
@@ -249,14 +237,12 @@ class PlanExecuteRuntime:
                             return finish('approval_required')
                         if step.tool not in REVERSIBLE_TOOLS:
                             return finish('non_reversible_action')
-                    operation_id = ':'.join((str(scope.tenant_id), scope.customer_id,
-                                             state.run_id, step.action_id))
+                    operation_id = ':'.join((str(scope.tenant_id), scope.customer_id, state.run_id, step.action_id))
                     self.reserve(state, tool=step.tool)
                     state.attempted[step.action_id] = {'tool': step.tool, 'operation_id': operation_id}
                     record('dispatch', action_id=step.action_id, tool=step.tool)
                     try:
-                        raw = await asyncio.wait_for(self.backend.dispatch(
-                            scope, step, operation_id, dry_run=dry_run), BACKEND_TIMEOUT_SECONDS)
+                        raw = await asyncio.wait_for(self.backend.dispatch(scope, step, operation_id, dry_run=dry_run), BACKEND_TIMEOUT_SECONDS)
                         result = AccountObservation.model_validate(raw).model_dump()
                     except Exception:
                         return finish('outcome_unknown_reconcile')
@@ -287,17 +273,14 @@ class PlanExecuteRuntime:
 def demo(stage):
     data = fixture()
     if stage == 'inspect':
-        print(json.dumps({'plan': data['initial'],
-                          'update_policy': policy()['tools']['update_address'],
+        print(json.dumps({'plan': data['initial'], 'update_policy': policy()['tools']['update_address'],
                           'reversible_tools': sorted(REVERSIBLE_TOOLS)}, indent=2))
         return
     backend, planner = OfflineAccountBackend(), RecordedPlanner()
-    runtime = PlanExecuteRuntime(tenant_id=1, backend=backend, planner=planner,
-                                 max_replans=1 if stage == 'revise' else 0)
-    scope = AccountExecutionScope(tenant_id=1, conversation_id=1,
-                                  customer_id='customer-1', role='support_supervisor')
-    answer = asyncio.run(runtime.answer(data['ticket'], request_id='demo', trace_id='demo',
-        execution_scope=scope, approved_changes=(('customer-1', '10 Harbor Road'),)))
+    runtime = PlanExecuteRuntime(tenant_id=1, backend=backend, planner=planner, max_replans=1 if stage == 'revise' else 0)
+    scope = AccountExecutionScope(tenant_id=1, conversation_id=1, customer_id='customer-1', role='support_supervisor')
+    answer = asyncio.run(runtime.answer(data['ticket'], request_id='demo', trace_id='demo', execution_scope=scope,
+                                        approved_changes=(('customer-1', '10 Harbor Road'),)))
     assert 'confirm_change' not in [row['tool'] for row in backend.log]
     print('Anchor stopped at the failed prerequisite; dependent confirm_change was never dispatched.')
     print(json.dumps({'dispatch_log': backend.log, 'trajectory': runtime.last_trajectory,

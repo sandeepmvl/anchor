@@ -17,6 +17,11 @@ FIXTURE = Path(__file__).parent / 'fixtures/react_responses.json'
 class BudgetSpy:
     def __init__(self, denied=None):
         self.steps = 4
+        self.max_steps = 20
+        self.max_calls = 20
+        self.max_cost = 100
+        self.calls = 2
+        self.cost = 0
         self.admissions = 2
         self.halted = False
         self.denied = denied
@@ -30,6 +35,7 @@ class BudgetSpy:
     async def admit(self, scope, name, arguments):
         assert name == 'retrieve'
         assert set(arguments) == {'query'}
+        self.calls += 1
         self.admissions += 1
         self.scopes.append(scope)
         return self.denied, None
@@ -106,6 +112,14 @@ def test_eligibility_timeline_and_grounded_answer(setup_run):
         'A17 eligibility class', 'standard refund window']
     assert events[2]['evidence_chunk_ids'] == [701]
     assert events[5]['evidence_chunk_ids'] == [701, 702]
+    assert budget.calls == budget.admissions == 4
+    assert budget.review_context['remaining_budget'] == {
+        'calls': budget.max_calls - budget.calls,
+        'steps': budget.max_steps - budget.steps,
+        'cost_units': budget.max_cost - budget.cost,
+    }
+    assert budget.review_context['plan_position'] == {'strategy': 'react', 'iteration': 3}
+    assert [p['id'] for p in budget.review_context['evidence']] == [701, 702]
     assert selections == [budget]
     assert budget.steps == 7 and budget.admissions == 4 and budget.halted
     assert all(s is scope for s in budget.scopes)

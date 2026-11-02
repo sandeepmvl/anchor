@@ -19,26 +19,21 @@ def persist(db, tenant_id, external_id, text, content_hash, make_nodes):
         raise ValueError('unredacted_payload')
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='retrieval_generations'").fetchone():
         from .index_maintenance import maintain_document
-        return maintain_document(db, tenant_id, external_id, text, {}, 'sentence-v1',
-                                 None, supplied_nodes=make_nodes)
+        return maintain_document(db, tenant_id, external_id, text, {}, 'sentence-v1', None, supplied_nodes=make_nodes)
     db.execute('BEGIN IMMEDIATE')
     try:
-        previous = db.execute('SELECT content_hash FROM documents WHERE tenant_id=? AND external_id=?',
-                              (tenant_id, external_id)).fetchone()
+        previous = db.execute('SELECT content_hash FROM documents WHERE tenant_id=? AND external_id=?', (tenant_id, external_id)).fetchone()
         if previous and previous['content_hash'] != content_hash:
             raise ValueError('external_id_conflict')
-        document = db.execute('SELECT * FROM documents WHERE tenant_id=? AND content_hash=?',
-                              (tenant_id, content_hash)).fetchone()
+        document = db.execute('SELECT * FROM documents WHERE tenant_id=? AND content_hash=?', (tenant_id, content_hash)).fetchone()
         if document and document['status'] == 'ready':
             db.commit()
             return {'document_id': document['id'], 'status': 'ready', 'skipped': True}
         db.execute('''INSERT INTO documents
             (tenant_id,external_id,source_name,content_hash,text,status,created_at,updated_at)
             VALUES(?,?,?,?,?,'processing',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-            ON CONFLICT(tenant_id,content_hash) DO NOTHING''',
-            (tenant_id, external_id, 'policy-upload', content_hash, text))
-        document = db.execute('SELECT * FROM documents WHERE tenant_id=? AND content_hash=?',
-                              (tenant_id, content_hash)).fetchone()
+            ON CONFLICT(tenant_id,content_hash) DO NOTHING''', (tenant_id, external_id, 'policy-upload', content_hash, text))
+        document = db.execute('SELECT * FROM documents WHERE tenant_id=? AND content_hash=?', (tenant_id, content_hash)).fetchone()
         nodes = make_nodes()
         parents = {}
         sql = '''INSERT INTO document_chunks
@@ -50,21 +45,16 @@ def persist(db, tenant_id, external_id, text, content_hash, make_nodes):
             parent_id = parents[node.parent_index] if node.is_leaf else None
             if node.text != prepare(node.text) or (node.window_text and node.window_text != prepare(node.window_text)):
                 raise ValueError('unredacted_node')
-            db.execute(sql, (document['tenant_id'], document['id'], node.chunk_index,
-                parent_id, int(node.is_leaf), node.text, node.window_text,
-                json.dumps(node.embedding) if node.embedding is not None else None,
-                node.embedding_model, node.embedding_revision, node.embedding_dimensions))
+            db.execute(sql, (document['tenant_id'], document['id'], node.chunk_index, parent_id, int(node.is_leaf), node.text, node.window_text, json.dumps(node.embedding) if node.embedding is not None else None, node.embedding_model, node.embedding_revision, node.embedding_dimensions))
             if not node.is_leaf:
                 row = db.execute('''SELECT id FROM document_chunks
-                    WHERE document_id=? AND tenant_id=? AND chunk_index=? AND is_leaf=0''',
-                    (document['id'], document['tenant_id'], node.chunk_index)).fetchone()
+                    WHERE document_id=? AND tenant_id=? AND chunk_index=? AND is_leaf=0''', (document['id'], document['tenant_id'], node.chunk_index)).fetchone()
                 if row is None:
                     raise ValueError('parent_identity_conflict')
                 parents[node.chunk_index] = row['id']
         if not nodes or not any(node.is_leaf for node in nodes):
             raise ValueError('empty_nodes')
-        db.execute("UPDATE documents SET status='ready', updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                   (document['id'],))
+        db.execute("UPDATE documents SET status='ready', updated_at=CURRENT_TIMESTAMP WHERE id=?", (document['id'],))
         db.commit()
         return {'document_id': document['id'], 'status': 'ready', 'skipped': False}
     except Exception:
@@ -125,23 +115,39 @@ def connect_memory(path):
     try:
         db.executescript('''
         CREATE TABLE IF NOT EXISTS agent_memories (
-          tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
-          conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
-          key TEXT NOT NULL, value TEXT NOT NULL,
-          updated_at REAL NOT NULL, expires_at REAL NOT NULL,
+          tenant_id INTEGER NOT NULL CHECK(tenant_id>0), conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
+          key TEXT NOT NULL, value TEXT NOT NULL, updated_at REAL NOT NULL, expires_at REAL NOT NULL,
           UNIQUE(tenant_id,conversation_id,key));
         CREATE TABLE IF NOT EXISTS episodic_memory_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
+          conversation_id INTEGER NOT NULL CHECK(conversation_id>0), summary TEXT NOT NULL,
+          created_at REAL NOT NULL, expires_at REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS memory_fact_expiry ON agent_memories(tenant_id,conversation_id,expires_at);
+        CREATE INDEX IF NOT EXISTS memory_episode_recency ON episodic_memory_log(tenant_id,conversation_id,created_at DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS memory_episode_expiry ON episodic_memory_log(tenant_id,conversation_id,expires_at);
+        ''')
+        return db
+    except Exception:
+        db.close()
+        raise
+
+
+def connect_escalations(path):
+    """Production checkpoint storage; independent of document and Rails tables."""
+    db = sqlite3.connect(path, timeout=2, isolation_level=None)
+    db.row_factory = sqlite3.Row
+    try:
+        db.execute('''CREATE TABLE IF NOT EXISTS escalations (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
           conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
-          summary TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL);
-        CREATE INDEX IF NOT EXISTS memory_fact_expiry
-          ON agent_memories(tenant_id,conversation_id,expires_at);
-        CREATE INDEX IF NOT EXISTS memory_episode_recency
-          ON episodic_memory_log(tenant_id,conversation_id,created_at DESC,id DESC);
-        CREATE INDEX IF NOT EXISTS memory_episode_expiry
-          ON episodic_memory_log(tenant_id,conversation_id,expires_at);
-        ''')
+          action_key TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN
+            ('pending','approved','executing','completed','rejected','outcome_unknown')),
+          context_json TEXT NOT NULL, reviewer TEXT, reason TEXT,
+          result_json TEXT, final_json TEXT,
+          created_at REAL NOT NULL, updated_at REAL NOT NULL,
+          UNIQUE(tenant_id,conversation_id,action_key))''')
         return db
     except Exception:
         db.close()
