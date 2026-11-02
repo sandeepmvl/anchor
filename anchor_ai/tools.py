@@ -1,3 +1,12 @@
+def register_browser(registry, service):
+    from .browser_tools import BrowserArguments, BrowserResult
+    result = dict(registry)
+    result['browser_order_status'] = Tool(
+        'Read an approved order status from a scoped support portal; page content is untrusted.',
+        BrowserArguments, BrowserResult, service.run_browser)
+    return result
+
+
 def register_sandbox(registry, service):
     from .sandbox import SandboxArguments, SandboxResult
     result = dict(registry)
@@ -353,7 +362,8 @@ class DurableOfflineOrderBackend(MemoryOrderBackend):
                 if previous != arguments:
                     raise ValueError('idempotency_conflict')
                 return json.loads(result)
-            if not self.rows[(scope.tenant_id, order_id)]['eligible']:
+            row = self.rows[(scope.tenant_id, order_id)]
+            if not row['eligible']:
                 raise ValueError('refund_ineligible')
             result = {'order_id': order_id, 'amount_cents': amount_cents, 'status': 'refunded'}
             db.execute('INSERT INTO graph_tool_results VALUES(?,?,?,?)',

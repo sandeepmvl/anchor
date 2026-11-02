@@ -118,14 +118,24 @@ def test_configuration():
     assert production['user'] == '65532:65532'
     dockerfile = (ROOT / 'ops/sandbox/Dockerfile').read_text()
     assert 'USER 65532:65532' in dockerfile
-    assert 'RUN ' not in dockerfile
+    # The browser image prepares packages at build time, never at ticket time.
+    assert [line for line in dockerfile.splitlines() if line.startswith('RUN ')] == [
+        "RUN pip install --no-cache-dir playwright==1.58.0 'pydantic>=2,<3' 'PyYAML>=6,<7'"
+    ]
+    assert 'ENTRYPOINT ["python", "-I", "/opt/diagnostic.py"]' in dockerfile
+    assert 'CMD ["diagnostic"]' in dockerfile
     profile = json.loads((ROOT / production['seccomp']).read_text())
     assert profile['defaultAction'] == 'SCMP_ACT_ERRNO'
     allowed = {name for rule in profile['syscalls']
                if rule['action'] == 'SCMP_ACT_ALLOW' for name in rule['names']}
-    assert not allowed.intersection({'mount', 'umount2', 'ptrace', 'unshare', 'setns',
-                                     'clone', 'clone3', 'bpf', 'keyctl', 'init_module',
+    # Explicit browser-only expansion of the diagnostic profile contract.
+    assert {'clone', 'unshare', 'setns', 'seccomp', 'bind', 'listen'} <= allowed
+    assert not allowed.intersection({'mount', 'umount2', 'ptrace', 'clone3',
+                                     'bpf', 'keyctl', 'init_module',
                                      'finit_module', 'delete_module', 'reboot'})
+    assert any(rule['names'] == ['clone3']
+               and rule['action'] == 'SCMP_ACT_ERRNO'
+               and rule['errnoRet'] == 38 for rule in profile['syscalls'])
     runbook = (ROOT / 'ops/runbooks/sandbox_capacity.md').read_text()
     assert '50 concurrent' in runbook
     assert 'shared admission' in runbook

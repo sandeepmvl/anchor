@@ -1,0 +1,16 @@
+version: 1
+origin: http://127.0.0.1:8765
+paths:
+  - /support_portal.html
+writes:
+  type:
+    order: '#order'
+  click:
+    lookup: '#lookup'
+    account_change: '#account-change'
+  submit: {}
+reads:
+  status: '#status'
+consequential:
+  - account_change
+max_steps: 6

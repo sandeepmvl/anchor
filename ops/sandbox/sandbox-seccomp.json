@@ -20,9 +20,27 @@
         "poll", "ppoll", "select", "pselect6", "getrusage", "times",
         "execve", "exit", "exit_group", "fork", "vfork", "wait4",
         "socket", "connect", "getsockopt", "setsockopt", "getsockname",
-        "getpeername", "sendto", "recvfrom", "shutdown"
+        "getpeername", "sendto", "recvfrom", "shutdown",
+        "clone", "unshare", "setns", "waitid", "kill", "tgkill",
+        "socketpair", "bind", "listen", "accept", "accept4",
+        "sendmsg", "recvmsg", "sendmmsg", "recvmmsg",
+        "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
+        "eventfd2", "timerfd_create", "timerfd_settime", "timerfd_gettime",
+        "prctl", "seccomp", "capget", "capset", "getcpu",
+        "sched_getparam", "sched_getscheduler", "sched_setscheduler",
+        "sched_setaffinity", "setpriority", "getpriority",
+        "mkdir", "mkdirat", "unlink", "unlinkat", "rename", "renameat",
+        "ftruncate", "truncate", "fsync", "fdatasync", "statfs", "fstatfs",
+        "chmod", "fchmod", "umask", "getresuid", "getresgid",
+        "setresuid", "setresgid", "setgroups", "setsid", "setpgid",
+        "getpgid", "getpgrp", "memfd_create", "restart_syscall"
       ],
       "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": ["clone3"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38
     }
   ]
 }

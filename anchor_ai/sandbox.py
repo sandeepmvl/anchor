@@ -83,6 +83,15 @@ class SandboxService:
         return {'backend': 'rehearsal', 'resource_api': 'available',
                 'container_isolation_verified': False}
 
+    def browser_readiness(self):
+        result = self.readiness()
+        for path in ('anchor_ai/browser_tools.py', 'config/browser_policy.yml',
+                     'labs/browser-agents/support_portal.html'):
+            if not (ROOT / path).is_file():
+                raise Rejected('browser_fixture_unavailable')
+        return {**result, 'browser': 'offline_fake', 'real_browser_verified': False,
+                'downloads_required': False}
+
     @contextlib.contextmanager
     def admit(self, tenant_id):
         if type(tenant_id) is not int or tenant_id <= 0:
@@ -107,8 +116,13 @@ class SandboxService:
     def execute_fixture(self, tenant_id, mode, *, wall_seconds=None):
         """Internal test/rehearsal API. Never expose fixture modes to the model."""
         self.readiness()
-        if mode not in {'diagnostic', 'cpu', 'memory', 'file', 'fds', 'sleep', 'output', 'env', 'group'}:
+        browser_modes = {'browser_clean', 'browser_injected', 'browser_account'}
+        if mode not in {'diagnostic', 'cpu', 'memory', 'file', 'fds', 'sleep', 'output', 'env', 'group'} | browser_modes:
             raise Rejected('unapproved_script')
+        fixture = FIXTURE
+        if mode in browser_modes:
+            self.browser_readiness()
+            fixture = ROOT / 'anchor_ai/browser_tools.py'
         with self.admit(tenant_id):
             limits = dict(self.policy['limits'])
             deadline = min(wall_seconds, limits['wall_seconds']) if wall_seconds is not None else limits['wall_seconds']
@@ -118,7 +132,7 @@ class SandboxService:
                 with tempfile.TemporaryFile() as output:
                     process = subprocess.Popen(
                         [sys.executable, '-I', str(Path(__file__).resolve()),
-                         '--child', str(FIXTURE), mode, json.dumps(limits)],
+                         '--child', str(fixture), mode, json.dumps(limits)],
                         cwd=scratch, env={}, stdin=subprocess.DEVNULL,
                         stdout=output, stderr=output, start_new_session=True,
                         close_fds=True)
@@ -141,6 +155,24 @@ class SandboxService:
                     return SandboxResult(exit_reason=reason,
                                          output=data[:limits['output_bytes']].decode(errors='replace'),
                                          returncode=process.returncode).model_dump()
+
+    async def run_browser(self, *, scope, order_id='A100'):
+        from anchor_ai.browser_tools import BrowserArguments, BrowserResult
+        BrowserArguments(order_id=order_id)
+        if getattr(scope, 'role', None) != 'support_agent':
+            return BrowserResult(outcome='browser_unauthorized').model_dump()
+        # Only the approved A100 rehearsal ticket is exposed by this backend.
+        # Production must bind portal credentials and order ownership to scope.
+        if order_id != 'A100':
+            return BrowserResult(outcome='browser_order_unavailable').model_dump()
+        try:
+            result = await asyncio.to_thread(self.execute_fixture, scope.tenant_id, 'browser_clean')
+            if result['exit_reason'] != 'exited' or result['returncode'] != 0:
+                return BrowserResult(outcome='sandbox_failure').model_dump()
+            data = json.loads(result['output'])
+            return BrowserResult(outcome=data['outcome'], status=data['status']).model_dump()
+        except Rejected as error:
+            return BrowserResult(outcome=error.code).model_dump()
 
     async def run(self, *, scope, script_id='ticket_diagnostic', confirmed=False, dry_run=True):
         from anchor_ai.observability import span
