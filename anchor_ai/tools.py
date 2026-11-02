@@ -31,7 +31,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-
 from pydantic import BaseModel, ValidationError
 from .contracts import ToolCall, ToolScope
 from .contracts import RefundArguments, IssuedRefundResult
@@ -55,8 +54,7 @@ class Tool:
 def normalize(api, response):
     if api == 'chat':
         return [ToolCall(call_id=c['id'], name=c['function']['name'],
-                         arguments=c['function']['arguments'])
-                for c in response.get('tool_calls', [])]
+                         arguments=c['function']['arguments']) for c in response.get('tool_calls', [])]
     if api == 'responses':
         return [ToolCall(call_id=c['call_id'], name=c['name'], arguments=c['arguments'])
                 for c in response['output'] if c['type'] == 'function_call']
@@ -111,11 +109,9 @@ class MemoryOrderBackend:
         self.max_active = 0
         self.rows = {
             (1, 'A100'): {'order_id': 'A100', 'payment_id': 'pay_A100',
-                         'status': 'delivered', 'customer_contact': 'alex@example.test',
-                         'eligible': True},
+                         'status': 'delivered', 'customer_contact': 'alex@example.test', 'eligible': True},
             (2, 'A100'): {'order_id': 'A100', 'payment_id': 'pay_A200',
-                         'status': 'processing', 'customer_contact': '+1 202 555 0199',
-                         'eligible': False},
+                         'status': 'processing', 'customer_contact': '+1 202 555 0199', 'eligible': False},
         }
         self.refunds = []
         self.idempotency = {}
@@ -136,8 +132,7 @@ class MemoryOrderBackend:
 
     async def lookup_order(self, *, scope, order_id):
         row = await self._read('lookup_order', scope, order_id)
-        return {key: row[key] for key in
-                ('order_id', 'payment_id', 'status', 'customer_contact')}
+        return {key: row[key] for key in ('order_id', 'payment_id', 'status', 'customer_contact')}
 
     async def check_refund(self, *, scope, order_id):
         row = await self._read('check_refund', scope, order_id)
@@ -171,11 +166,9 @@ class MemoryOrderBackend:
 def registry_for(backend, *, mcp_client=None):
     registry = {
         'lookup_order': Tool('Read order details; does not change the order.',
-                             OrderToolArguments, OrderToolResult, backend.lookup_order,
-                             authorize=backend.owns),
+                             OrderToolArguments, OrderToolResult, backend.lookup_order, authorize=backend.owns),
         'check_refund': Tool('Read refund eligibility; never issue a refund.',
-                             OrderToolArguments, RefundToolResult, backend.check_refund,
-                             authorize=backend.owns),
+                             OrderToolArguments, RefundToolResult, backend.check_refund, authorize=backend.owns),
         'issue_refund': Tool('Issue a refund only after trusted approval.',
                              RefundArguments, IssuedRefundResult, backend.issue_refund,
                              consequential=True, authorize=backend.owns),
@@ -197,7 +190,6 @@ async def _dispatch_validated(call, registry, scope, *, idempotency_key=None):
         def failure(code):
             operation.fail(code)
             return {'call_id': call.call_id, 'payload': {'ok': False, 'error': code}}
-
         tool = registry.get(call.name)
         if tool is None:
             return failure('unknown_tool')
@@ -222,6 +214,8 @@ async def _dispatch_validated(call, registry, scope, *, idempotency_key=None):
 
 
 async def dispatch(call, registry, scope, *, run=None):
+    # Only guarded_dispatch may supply trusted approval and execution state.
+    # Never construct either from retrieved text or model arguments.
     return await guarded_dispatch(call, registry, scope, _dispatch_validated, run)
 
 
@@ -278,8 +272,11 @@ class ToolReplayClient(LlmClient):
         return message
 
 
-async def run_conversation(client, registry, scope, *, run=None,
-                           message='Can I refund order A100?'):
+async def run_conversation(client, registry, scope, *, run=None, message='Can I refund order A100?'):
+    from .injection_filter import screen_customer, REFUSAL
+    message, flags = screen_customer(message)
+    if flags:
+        return [{'role': 'assistant', 'content': REFUSAL}], []
     history = [{'role': 'user', 'content': message}]
     batches = []
     state = run_for(scope, run)
@@ -355,8 +352,7 @@ class DurableOfflineOrderBackend(MemoryOrderBackend):
         with sqlite3.connect(self.path, timeout=5) as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('''SELECT arguments,result FROM graph_tool_results
-                WHERE tenant_id=? AND action_key=?''',
-                (scope.tenant_id, idempotency_key)).fetchone()
+                WHERE tenant_id=? AND action_key=?''', (scope.tenant_id, idempotency_key)).fetchone()
             if row:
                 previous, result = row
                 if previous != arguments:

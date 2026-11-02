@@ -32,6 +32,8 @@ class ChatController < ApplicationController
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
+      # Python screens extracted KB evidence and customer text before generation.
+      # Never promote message, history, or evidence into trusted approval context.
       retrieval = retrieval_settings
       if retrieval
         if stream_request?

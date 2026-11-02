@@ -16,7 +16,6 @@ import hmac
 import os
 from contextlib import asynccontextmanager
 from typing import Annotated
-
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -35,6 +34,18 @@ except ImportError:
     from observability import span, context
 
 
+from anchor_ai.injection_filter import screen_customer, REFUSAL
+
+
+def require_safe_customer(value):
+    safe, flags = screen_customer(str(value))
+    if flags:
+        raise HTTPException(status_code=422, detail='injection_detected',
+                            headers={'X-Anchor-Injection': 'instruction_override'})
+    # Preserve prompt-contract and context attributes on string subclasses.
+    return value if safe == str(value) else safe
+
+
 @asynccontextmanager
 async def lifespan(application):
     from eval.eval_endpoint import ReleaseRuntime
@@ -44,8 +55,7 @@ async def lifespan(application):
                   if os.environ.get('ANCHOR_MCP_ENABLED') == '1' else None)
     # Supply this factory to the existing bounded runtime's registry dependency.
     # Its backend must still implement authenticated tenant/order ownership.
-    application.state.agent_tool_registry_factory = lambda backend: registry_for(
-        backend, mcp_client=mcp_client)
+    application.state.agent_tool_registry_factory = lambda backend: registry_for(backend, mcp_client=mcp_client)
     factory = getattr(application.state, 'rag_release_runtime_factory', ReleaseRuntime)
     application.state.rag_release_runtime = factory()
     batch_factory = getattr(application.state, 'batch_runtime_factory', None)
@@ -69,12 +79,9 @@ app.add_middleware(LatencyBoundary)
 
 
 @app.post('/v1/agent')
-async def bounded_agent(
-    body: AgentRequest,
-    request: Request,
+async def bounded_agent(body: AgentRequest, request: Request,
     x_anchor_secret: Annotated[str | None, Header()] = None,
-    x_anchor_context: Annotated[str | None, Header()] = None,
-):
+    x_anchor_context: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth')
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -87,8 +94,11 @@ async def bounded_agent(
     runtime = getattr(app.state, 'bounded_agent_runtime', None)
     if runtime is None:
         raise HTTPException(status_code=503, detail='agent_not_configured')
+    payload = body.model_dump()
+    if isinstance(payload.get('message'), str):
+        payload['message'] = require_safe_customer(payload['message'])
     try:
-        return await runtime.execute(x_anchor_context, body.model_dump())
+        return await runtime.execute(x_anchor_context, payload)
     except ContextError:
         raise HTTPException(status_code=403, detail='execution_context_rejected') from None
     except ValueError:
@@ -116,11 +126,8 @@ async def validation_failed(request: Request, error: RequestValidationError):
 
 
 @router.post('/infer', response_model=InferResponse, response_model_exclude_none=True)
-async def infer(
-    body: InferRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-) -> InferResponse:
+async def infer(body: InferRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None) -> InferResponse:
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -131,20 +138,22 @@ async def infer(
     if not hmac.compare_digest(supplied, expected.encode('utf-8')):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    safe, flags = screen_customer(str(body.message))
+    if flags:
+        return JSONResponse(content={'reply': REFUSAL},
+                            headers={'X-Anchor-Injection': 'instruction_override'})
+    message = require_safe_customer(body.message)
     item.set(stage='provider')
     try:
-        return await model_call(LlmClient().complete_result, body.message)
+        return await model_call(LlmClient().complete_result, message)
     except ProviderError as error:
         item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
 
 
 @router.post('/structured_replies', response_model=TriageLabels)
-async def structured_reply(
-    body: InferRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def structured_reply(body: InferRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -154,9 +163,10 @@ async def structured_reply(
     if not hmac.compare_digest((x_anchor_secret or '').encode('utf-8'), expected.encode('utf-8')):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    message = require_safe_customer(body.message)
     item.set(stage='provider')
     try:
-        return await LlmClient().complete_structured(body.message)
+        return await LlmClient().complete_structured(message)
     except InvalidModelOutput as error:
         item.fail('validation_failed', 422)
         return JSONResponse(status_code=422, content={'detail': error.detail()})
@@ -166,11 +176,8 @@ async def structured_reply(
 
 
 @router.post('/infer/stream')
-async def infer_stream(
-    body: InferRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def infer_stream(body: InferRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -180,6 +187,7 @@ async def infer_stream(
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    body.message = require_safe_customer(body.message)
     from anchor_ai.streaming import response_for
     return response_for(body, request)
 
@@ -202,11 +210,8 @@ def chunk_embed(body: ChunkEmbedRequest):
 
 
 @router.post('/chunk_embed', response_model=list[IngestionNode])
-def chunk_embed_route(
-    body: ChunkEmbedRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+def chunk_embed_route(body: ChunkEmbedRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -228,11 +233,8 @@ from anchor_ai.observability import emit_retrieval
 
 
 @router.post('/dense_rag', response_model=DenseRagResponse)
-async def dense_rag(
-    body: DenseRagRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def dense_rag(body: DenseRagRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -266,11 +268,8 @@ from anchor_ai.schemas import HybridRequest, HybridResponse
 
 
 @router.post('/retrieve/hybrid', response_model=HybridResponse)
-async def hybrid_retrieve(
-    body: HybridRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def hybrid_retrieve(body: HybridRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -307,19 +306,14 @@ async def hybrid_retrieve(
 app.include_router(router)
 app.add_api_route('/infer', infer, methods=['POST'], response_model=InferResponse,
                   response_model_exclude_none=True)
-app.add_api_route('/retrieve/hybrid', hybrid_retrieve, methods=['POST'],
-                  response_model=HybridResponse)
-
+app.add_api_route('/retrieve/hybrid', hybrid_retrieve, methods=['POST'], response_model=HybridResponse)
 
 from anchor_ai.schemas import AnalyzedResponse
 
 
 @app.post('/v1/retrieve/analyzed', response_model=AnalyzedResponse)
-async def analyzed_retrieve(
-    body: HybridRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def analyzed_retrieve(body: HybridRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -357,11 +351,8 @@ from anchor_ai.schemas import RagRequest
 
 
 @app.post('/v1/rag', response_model=DenseRagResponse)
-async def bounded_rag(
-    body: RagRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def bounded_rag(body: RagRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -371,6 +362,7 @@ async def bounded_rag(
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    body.message = require_safe_customer(body.message)
     factory = getattr(app.state, 'bounded_rag_runtime_factory', None)
     if factory is None:
         if os.environ.get('ANCHOR_MULTIHOP_FIXTURE') != '1' or body.tenant_id != 1:
@@ -407,11 +399,8 @@ def healthz():
 
 
 @app.post('/rag', response_model=ReleaseRagResponse)
-async def release_rag(
-    body: ReleaseRagRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def release_rag(body: ReleaseRagRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -445,11 +434,8 @@ from langchain_core.exceptions import OutputParserException
 
 
 @app.post('/v1/chain_replies', response_model=TicketResponse)
-async def chain_reply(
-    body: InferRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def chain_reply(body: InferRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     from anchor_ai.prompts import RegistryLookupError
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
@@ -460,6 +446,7 @@ async def chain_reply(
         raise HTTPException(status_code=401, detail='service_auth_failed')
     if os.environ.get('ANCHOR_REPLY_PIPELINE') != 'lcel':
         raise HTTPException(status_code=404, detail='pipeline_not_enabled')
+    body.message = require_safe_customer(body.message)
     item.set(stage='chain')
     try:
         return await run_ticket_chain(body.model_dump(), trace={
@@ -476,12 +463,9 @@ async def chain_reply(
 
 
 @app.post('/v1/multi_agent')
-async def multi_agent(
-    body: AgentRequest,
-    request: Request,
+async def multi_agent(body: AgentRequest, request: Request,
     x_anchor_secret: Annotated[str | None, Header()] = None,
-    x_anchor_context: Annotated[str | None, Header()] = None,
-):
+    x_anchor_context: Annotated[str | None, Header()] = None):
     from anchor_ai.orchestration import run_milestone, MilestoneUnavailable
     item = request.state.telemetry
     item.set(stage='auth')
@@ -492,11 +476,13 @@ async def multi_agent(
         raise HTTPException(status_code=401, detail='service_auth_failed')
     if not x_anchor_context:
         raise HTTPException(status_code=403, detail='missing_execution_context')
+    payload = body.model_dump()
+    if isinstance(payload.get('message'), str):
+        payload['message'] = require_safe_customer(payload['message'])
     try:
         with span('python.multi_agent', stage='orchestration'):
-            return await run_milestone(
-                getattr(app.state, 'multi_agent_runtime', None),
-                x_anchor_context, body.model_dump())
+            return await run_milestone(getattr(app.state, 'multi_agent_runtime', None),
+                                       x_anchor_context, payload)
     except MilestoneUnavailable:
         item.fail('orchestration_not_configured', 503)
         raise HTTPException(status_code=503, detail='orchestration_not_configured') from None
@@ -510,11 +496,8 @@ from anchor_ai.schemas import CitedRagEnvelope
 
 
 @app.post('/v1/rag/cited', response_model=CitedRagEnvelope)
-async def cited_rag(
-    body: DenseRagRequest,
-    request: Request,
-    x_anchor_secret: Annotated[str | None, Header()] = None,
-):
+async def cited_rag(body: DenseRagRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
@@ -525,6 +508,7 @@ async def cited_rag(
     factory = getattr(app.state, 'cited_rag_runtime_factory', None)
     if factory is None:
         raise HTTPException(status_code=503, detail='cited_generation_not_configured')
+    body.message = require_safe_customer(body.message)
     try:
         runtime = factory(tenant_id=body.tenant_id)
         if runtime.tenant_id != body.tenant_id:
@@ -564,6 +548,7 @@ async def public_faq_answer(token, query, *, path, runtime=None):
     runtime = runtime or getattr(app.state, 'semantic_answer_runtime', None)
     if runtime is None:
         raise HTTPException(status_code=503, detail='semantic_answer_not_configured')
+    query = require_safe_customer(query)
     return await runtime.answer(token, query, path=path)
 
 

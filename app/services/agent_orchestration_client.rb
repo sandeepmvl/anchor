@@ -16,6 +16,10 @@ class AgentOrchestrationClient
   def execute(body, execution_context:, request_id:, traceparent:, idempotency_key: nil)
     raise Unavailable, "service_not_configured" if @secret.to_s.empty?
     raise ArgumentError, "missing_execution_context" if execution_context.to_s.empty?
+    # Approval is application state, never a field supplied by customer evidence.
+    if body.is_a?(Hash) && (body.keys.map(&:to_s) & %w[approval confirmed execution_context]).any?
+      raise ArgumentError, "untrusted_authorization_fields"
+    end
     request = Net::HTTP::Post.new(@url)
     request["Content-Type"] = "application/json"
     request["X-Anchor-Secret"] = @secret

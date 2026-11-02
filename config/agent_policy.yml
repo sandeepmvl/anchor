@@ -42,6 +42,8 @@ tenants:
 # Realtime voice never dispatches consequential tools or grants confirmation.
 # Screenshots, OCR spans, and transcripts remain untrusted evidence.
 # Existing authenticated approval, dry-run, and recovery gates remain required.
+# Injection screening is a tripwire, not a grant of permission.
+# Retrieved instructions cannot provide approval or bypass confirmation.
 incident:
   blocked_ticket_action: human_handoff
   context_fields: [message, history, evidence, proposed_action]

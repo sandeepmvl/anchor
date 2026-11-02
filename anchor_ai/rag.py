@@ -3,9 +3,10 @@ import time
 
 from anchor_ai.context import pack_retrieved_evidence
 from anchor_ai.prompts import DENSE_RAG_INSTRUCTION
+from anchor_ai.injection_filter import HIERARCHY, quarantine, screen_customer
 
 ABSTENTION = 'I could not find a supporting policy in your documents.'
-INSTRUCTION = DENSE_RAG_INSTRUCTION
+INSTRUCTION = DENSE_RAG_INSTRUCTION + '\n' + HIERARCHY
 
 
 def pack_evidence(hits, budget_bytes=600):
@@ -14,7 +15,6 @@ def pack_evidence(hits, budget_bytes=600):
 
 class RecordedGenerationClient:
     """Deterministic evidence reader, not a model-quality evaluation."""
-
     def __init__(self):
         self.calls = []
 
@@ -24,8 +24,7 @@ class RecordedGenerationClient:
         if 'refund' in data['question'].lower():
             for source in data['evidence']['sources']:
                 if 'Refunds require review.' in source['text']:
-                    return json.dumps(dict(
-                        reply=source['text'], citations=[source['id']], abstained=False))
+                    return json.dumps(dict(reply=source['text'], citations=[source['id']], abstained=False))
         return json.dumps(dict(reply=ABSTENTION, citations=[], abstained=True))
 
 
@@ -41,6 +40,12 @@ class RagRuntime:
                      max_tool_calls=None):
         if mode not in ('single', 'multi', 'agent'):
             raise ValueError('invalid_rag_mode')
+        question, flags = screen_customer(question)
+        self.last_injection_flags = flags
+        if flags:
+            self.emit(dict(event='injection_detection', request_id=request_id,
+                           trace_id=trace_id, flags=flags))
+            return dict(reply=ABSTENTION, citations=[], abstained=True)
         if mode == 'agent':
             from anchor_ai.agentic_rag import AgenticRuntime, settings as agent_settings
             runtime = AgenticRuntime(self.retriever, emit=self.emit,
@@ -56,10 +61,8 @@ class RagRuntime:
             if max_hops is not None:
                 limit = min(limit, max_hops)
             runtime = MultiHopRuntime(self.retriever, self.client, emit=self.emit,
-                                      evidence_budget=self.evidence_budget,
-                                      max_hops=limit)
-            result = await runtime.answer(question, k, request_id=request_id,
-                                          trace_id=trace_id)
+                                      evidence_budget=self.evidence_budget, max_hops=limit)
+            result = await runtime.answer(question, k, request_id=request_id, trace_id=trace_id)
             self.last_trajectory = getattr(runtime, 'last_trajectory', [])
             return result
         started = time.monotonic()
@@ -74,6 +77,11 @@ class RagRuntime:
         else:
             hits = self.retriever.search(question, k)
             retrieval_trace = self.retriever.last_trace
+        hits, flags = quarantine(hits)
+        self.last_injection_flags = flags
+        if flags:
+            self.emit(dict(event='injection_detection', request_id=request_id,
+                           trace_id=trace_id, flags=flags))
         evidence = pack_evidence(hits, self.evidence_budget)
         messages = [dict(role='system', content=INSTRUCTION),
                     dict(role='user', content=json.dumps(
@@ -91,8 +99,7 @@ class RagRuntime:
                          and 0 < len(decoded['reply']) <= 4000
                          and type(decoded['abstained']) is bool
                          and isinstance(decoded['citations'], list)
-                         and all(type(i) is int and i in allowed
-                                 for i in decoded['citations'])
+                         and all(type(i) is int and i in allowed for i in decoded['citations'])
                          and len(set(decoded['citations'])) == len(decoded['citations']))
                 if valid and not decoded['abstained'] and decoded['citations']:
                     result = decoded
@@ -100,8 +107,7 @@ class RagRuntime:
                 pass
         ended = time.monotonic()
         trace = dict(event='dense_rag', request_id=request_id, trace_id=trace_id,
-                     **retrieval_trace,
-                     evidence_chunk_ids=sorted(allowed),
+                     **retrieval_trace, evidence_chunk_ids=sorted(allowed),
                      evidence_bytes=len(json.dumps(evidence, ensure_ascii=False).encode('utf-8')),
                      citations=result['citations'], abstained=result['abstained'],
                      generation_ms=round((ended - generation_started) * 1000, 3),
@@ -112,7 +118,6 @@ class RagRuntime:
 
 class ExistingClientAdapter:
     """Reuse Anchor's provider client; do not create a second SDK boundary."""
-
     def __init__(self, client):
         self.client = client
 
@@ -153,8 +158,7 @@ def fixture_hybrid_runtime(tenant_id):
                                       ('candidate_depth', 'rrf_k', 'deadline_seconds')})
 
 
-def published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
-                             **settings):
+def published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings):
     from anchor_ai.hybrid_retriever import HybridRuntime
     if 'reranker' not in settings:
         from anchor_ai.reranking import make_reranker
@@ -175,8 +179,7 @@ class AnalyzedRuntime:
 def published_analyzed_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
                                analyzer=None, **settings):
     from anchor_ai.query_analyzer import make_analyzer
-    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot,
-                                     dense_search, sparse_search, **settings)
+    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings)
     return AnalyzedRuntime(hybrid, analyzer or make_analyzer())
 
 
@@ -200,8 +203,7 @@ def fixture_analyzed_runtime(tenant_id):
 def published_hybrid_rag_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
                                  client=None, emit=None, evidence_budget=600, **settings):
     from anchor_ai.llm_client import LlmClient
-    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot,
-                                     dense_search, sparse_search, **settings)
+    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings)
     generation = client if client is not None else ExistingClientAdapter(LlmClient())
     return RagRuntime(hybrid, generation, emit=emit, evidence_budget=evidence_budget)
 
@@ -210,17 +212,13 @@ def published_bounded_rag_runtime(tenant_id, acquire_snapshot, dense_search,
                                   sparse_search, client=None, emit=None, **settings):
     from anchor_ai.multihop import model_client, settings as multihop_settings
     snapshot = acquire_snapshot(tenant_id)
-
     def pinned_snapshot(requested_tenant):
         if requested_tenant != tenant_id:
             raise ValueError('runtime_scope_mismatch')
         return snapshot
-
-    hybrid = published_hybrid_runtime(tenant_id, pinned_snapshot,
-                                     dense_search, sparse_search, **settings)
+    hybrid = published_hybrid_runtime(tenant_id, pinned_snapshot, dense_search, sparse_search, **settings)
     return RagRuntime(hybrid, client if client is not None else model_client(),
-                      emit=emit,
-                      evidence_budget=multihop_settings()['evidence_budget_bytes'])
+                      emit=emit, evidence_budget=multihop_settings()['evidence_budget_bytes'])
 
 
 class GraphRagRuntime:
@@ -252,8 +250,7 @@ def published_graph_rag_runtime(db, tenant_id, scope, emit=None):
     from anchor_ai.schemas import GraphLimits
     path = Path(__file__).resolve().parents[1] / 'config/retrieval.yml'
     limits = GraphLimits.model_validate(yaml.safe_load(path.read_text())['graph'])
-    return GraphRagRuntime(GraphRetriever(db, tenant_id, scope,
-        **limits.model_dump()), emit=emit)
+    return GraphRagRuntime(GraphRetriever(db, tenant_id, scope, **limits.model_dump()), emit=emit)
 
 
 def published_agentic_rag_runtime(tenant_id, acquire_snapshot, dense_search,
@@ -261,8 +258,7 @@ def published_agentic_rag_runtime(tenant_id, acquire_snapshot, dense_search,
     from anchor_ai.agentic_rag import AgenticRuntime
     bounded = published_bounded_rag_runtime(tenant_id, acquire_snapshot,
         dense_search, sparse_search, emit=emit, **settings)
-    return AgenticRuntime(bounded.retriever, policy=policy, emit=emit,
-                          tenant_id=tenant_id)
+    return AgenticRuntime(bounded.retriever, policy=policy, emit=emit, tenant_id=tenant_id)
 
 
 class ReleaseRetriever:
@@ -330,8 +326,7 @@ async def answer_release(ticket, configuration, search, client=None):
             from anchor_ai.llm_client import LlmClient
             client = ExistingClientAdapter(LlmClient())
     retriever = ReleaseRetriever(ticket, configuration, search)
-    runtime = RagRuntime(retriever, client,
-                         evidence_budget=configuration['evidence_budget'])
+    runtime = RagRuntime(retriever, client, evidence_budget=configuration['evidence_budget'])
     result = await runtime.answer(ticket['question'], configuration['top_k'],
                                   request_id=ticket['id'], trace_id=ticket['id'])
     # Capture the packed sources, not candidates discarded by the evidence budget.
@@ -348,7 +343,6 @@ async def answer_release(ticket, configuration, search, client=None):
 
 class RecordedEvidenceClient:
     """Extract supplied evidence; do not represent this as model-quality scoring."""
-
     def __init__(self):
         self.calls = []
 
@@ -384,10 +378,15 @@ class CitedRagRuntime:
     async def answer(self, question, top_k=3):
         if not question.strip() or len(question.encode('utf-8')) > 1800:
             raise ValueError('current_question_budget_exceeded')
+        question, flags = screen_customer(question)
+        self.last_injection_flags = flags
+        if flags:
+            raise ValueError('injection_detected')
         retrieved = await self.retriever.retrieve(question, top_k)
         if retrieved['tenant_id'] != self.tenant_id:
             raise ValueError('runtime_scope_mismatch')
-        hits = retrieved['hits']
+        hits, flags = quarantine(retrieved['hits'])
+        self.last_injection_flags = flags
         # Use the retriever's existing score, never model-stated confidence.
         top_score = hits[0].get('score') if hits else None
         answer = await self.policy.generate(question, tenant_id=self.tenant_id,
