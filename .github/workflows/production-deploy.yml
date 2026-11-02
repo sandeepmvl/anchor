@@ -19,7 +19,7 @@ jobs:
       ANCHOR_AI_SECRET: ${{ secrets.ANCHOR_AI_SECRET }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
       - uses: actions/setup-python@v5

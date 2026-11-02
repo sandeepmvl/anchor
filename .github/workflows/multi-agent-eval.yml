@@ -14,7 +14,7 @@ jobs:
       ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS: ${{ vars.ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS }}
       ANCHOR_AI_SECRET: ${{ secrets.ANCHOR_AI_SECRET }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Accumulated product gates
         run: |
           bin/rails test
