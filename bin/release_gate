@@ -26,6 +26,8 @@ commands = [
   [python, "eval/rag_gate.py"],
   [python, "eval/agent_gate.py"],
   [python, "eval/multi_agent_gate.py"],
+  [RbConfig.ruby, "bin/redteam_harness.rb", "--suite", "full", "--target", "hardened_release"],
+  [python, "-m", "labs.security_hardening.milestone", "--release"],
   [python, "-m", "eval.release_gate", "decide"]
 ]
 

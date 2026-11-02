@@ -140,6 +140,11 @@ class ChatController < ApplicationController
   private
 
   def reject_untrusted_tenant_state
+    authority = %w[approval confirmed execution_context tenant_credential role]
+    if authority.any? { |key| params.key?(key) }
+      render json: {error: 'untrusted_authorization_fields'}, status: :forbidden
+      return
+    end
     return unless Rails.env.production? || ENV.key?('ANCHOR_TENANT_CREDENTIALS')
     forbidden = %w[tenant_id organization_id conversation_id history summary_state checkpoint_id]
     if forbidden.any? { |key| params.key?(key) }

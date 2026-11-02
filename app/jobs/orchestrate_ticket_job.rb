@@ -3,7 +3,7 @@ class OrchestrateTicketJob < ApplicationJob
 
   # The caller is the existing authenticated ticket boundary. Never pass
   # customer-supplied tenant identifiers as an execution-context substitute.
-  def perform(request, execution_context, request_id, traceparent, task_id: nil)
+  def perform(request, execution_context, request_id, traceparent, task_id: nil, tenant_credential: nil)
     if task_id
       task = AiTask.find_by!(id: task_id, operation: "agent")
       AiTaskDispatcher.run(task)
@@ -13,10 +13,11 @@ class OrchestrateTicketJob < ApplicationJob
     raise ArgumentError, "missing request identity" if request_id.to_s.empty?
 
     AgentOrchestrationClient.new.execute(
-      request,
+      PiiRedactionClient.value(request),
       execution_context: execution_context,
       request_id: request_id,
-      traceparent: traceparent
+      traceparent: traceparent,
+      tenant_credential: tenant_credential
     )
   end
 

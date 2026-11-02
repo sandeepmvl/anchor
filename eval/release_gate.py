@@ -261,6 +261,15 @@ def main():
     if baseline_path.exists():
         bundle['baseline'] = json.loads(baseline_path.read_text())
     verdict = decide(bundle, identity)
+    from labs.security_hardening.milestone import require_production
+    try:
+        bundle['security'] = require_production(identity)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        verdict['passed'] = False
+        verdict['errors'].append('security_evidence_missing_or_failed')
+        verdict['rows']['security'] = 'failed'
+    else:
+        verdict['rows']['security'] = 'passed'
     save(WORK / 'evidence.json', bundle)
     from eval.dashboard import render
     summary = render(bundle, verdict)

@@ -257,6 +257,7 @@ async def dense_rag(body: DenseRagRequest, request: Request,
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    body.message = require_safe_customer(body.message)
     factory = getattr(app.state, 'retrieval_runtime_factory', None)
     if factory is None:
         if os.environ.get('ANCHOR_DENSE_FIXTURE') != '1' or body.tenant_id != 1:
@@ -292,6 +293,7 @@ async def hybrid_retrieve(body: HybridRequest, request: Request,
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    body.query = require_safe_customer(body.query)
     factory = getattr(app.state, 'hybrid_runtime_factory', None)
     if factory is None:
         if os.environ.get('ANCHOR_HYBRID_FIXTURE') != '1' or body.tenant_id != 1:
@@ -335,6 +337,7 @@ async def analyzed_retrieve(body: HybridRequest, request: Request,
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    body.query = require_safe_customer(body.query)
     factory = getattr(app.state, 'analyzed_runtime_factory', None)
     if factory is None:
         if os.environ.get('ANCHOR_QUERY_FIXTURE') != '1' or body.tenant_id != 1:
@@ -422,6 +425,7 @@ async def release_rag(body: ReleaseRagRequest, request: Request,
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    require_safe_customer(body.question)
     runtime = getattr(app.state, 'rag_release_runtime', None)
     if runtime is None:
         item.fail('retrieval_not_configured', 503)

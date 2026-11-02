@@ -50,6 +50,33 @@ ACTIONS = ['retrieve', 'lookup_order', 'check_refund', 'issue_refund']
 TERMINAL = {'completed', 'denied', 'exhausted', 'rejected', 'failed'}
 
 
+def hardened_customer_text(value):
+    """Internal callers share the HTTP input boundary; text grants no authority."""
+    from anchor_ai.injection_filter import screen_customer
+    from anchor_ai.jailbreak_guard import evaluate
+    from anchor_ai.pii import redact_value
+    safe, flags = screen_customer(value)
+    if flags or evaluate(value).refused:
+        raise ValueError('unsafe_customer_text')
+    return redact_value(safe)
+
+
+def hardened_observation(value):
+    """Reject instruction overrides before evidence enters durable agent memory."""
+    from anchor_ai.pii import redact_value
+    def check(item):
+        if isinstance(item, str):
+            hardened_customer_text(item)
+        elif isinstance(item, dict):
+            for child in item.values():
+                check(child)
+        elif isinstance(item, list):
+            for child in item:
+                check(child)
+    check(value)
+    return redact_value(value)
+
+
 def argument_fingerprint(arguments):
     return hashlib.sha256(json.dumps(arguments, sort_keys=True,
                                     separators=(',', ':')).encode()).hexdigest()
@@ -114,6 +141,8 @@ class BoundedRuntime:
         return json.loads(row[0]) if row else None
 
     def save(self, s):
+        from anchor_ai.pii import redact_value
+        s = redact_value(s)
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO bounded_runs VALUES(?,?,?,?)',
                        (s['tenant_id'], s['conversation_id'], s['run_id'], json.dumps(s)))
@@ -123,6 +152,9 @@ class BoundedRuntime:
                      trace_id=s['trace_id'], tenant_id=s['tenant_id'],
                      conversation_id=s['conversation_id'], step=s['steps'], **fields)
         s['events'].append(event)
+        from anchor_ai.pii import redact_value
+        event = redact_value(event)
+        s['events'][-1] = event
         self.emit(copy.deepcopy(event))
 
     def stop(self, s, status, reason):
@@ -184,6 +216,11 @@ class BoundedRuntime:
         from anchor_ai.jailbreak_guard import evaluate, REFUSAL
         if req.operation == 'start' and evaluate(req.message).refused:
             return dict(status='denied', reply=REFUSAL, calls=0)
+        if req.operation == 'start':
+            try:
+                req.message = hardened_customer_text(req.message)
+            except ValueError:
+                return dict(status='denied', reply=REFUSAL, calls=0)
         with self.locked():
             s = self.load(scope, req.run_id)
             if s is None:
@@ -306,6 +343,7 @@ class BoundedRuntime:
                                 or observation.get('idempotency_key') != s['key']
                                 or observation.get('amount_cents') != s['arguments']['amount_cents']):
                             raise ValueError('invalid_refund_receipt')
+                    observation = hardened_observation(observation)
                     digest = argument_fingerprint(s['arguments'])
                     self.event(s, 'trajectory', decision=trajectory_decision(
                         kind='tool', tool=action, expected_tool=s['plan'][s['phase']],
@@ -398,6 +436,10 @@ class SemanticAnswerRuntime:
                     or s.role != identity.role or s.answer_path != path):
                 raise ContextError('cache_scope_rejected')
             return s
+        from anchor_ai.injection_filter import screen_customer
+        _, flags = screen_customer(query)
+        if flags:
+            return REFUSAL
         snapshot = fresh()
         eligible = self.cache.eligible(snapshot, query) == 'public_faq'
         vector = self.embed(query, snapshot) if eligible else None

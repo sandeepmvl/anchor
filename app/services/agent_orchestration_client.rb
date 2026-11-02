@@ -32,12 +32,12 @@ class AgentOrchestrationClient
     request["X-Request-Id"] = request_id
     request["traceparent"] = traceparent
     request["Idempotency-Key"] = idempotency_key if idempotency_key
-    request.body = JSON.generate(body)
+    request.body = JSON.generate(PiiRedactionClient.value(body))
     response = @transport.call(@url, request)
     raise Unavailable, "orchestration_unavailable" unless response.code.to_i.between?(200, 299)
     value = JSON.parse(response.body)
     raise Unavailable, "invalid_orchestration_response" unless value.is_a?(Hash)
-    value
+    PiiRedactionClient.value(value)
   rescue JSON::ParserError, IOError, SystemCallError, Timeout::Error
     raise Unavailable, "orchestration_transport_failed"
   end

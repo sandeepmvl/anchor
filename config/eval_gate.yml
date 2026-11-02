@@ -18,7 +18,17 @@
     "incident": "eval/datasets/failover_budget_incident.jsonl",
     "security_cases": "eval/datasets/security_regression_cases.jsonl",
     "security_suite": "eval/adversarial_prompts.yml",
-    "security_gate": "eval/redteam_gate.py"
+    "security_gate": "eval/redteam_gate.py",
+    "security_milestone": "labs/security_hardening/milestone.py",
+    "security_app": "anchor_ai/app.py",
+    "security_runtime": "anchor_ai/runtime.py",
+    "security_chat": "app/controllers/chat_controller.rb",
+    "security_job": "app/jobs/orchestrate_ticket_job.rb",
+    "security_client": "app/services/agent_orchestration_client.rb",
+    "security_rails_tests": "test/integration/security_hardening_milestone_test.rb",
+    "security_python_tests": "anchor_ai/tests/test_security_hardening_milestone.py",
+    "security_release_gate": "eval/release_gate.py",
+    "security_workflow": ".github/workflows/eval-gate.yml"
   },
   "quarantine": {},
   "required_upstream": ["candidate", "golden", "calibration", "trajectory", "regression", "accumulated"]

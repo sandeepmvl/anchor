@@ -4,4 +4,8 @@ if ARGV.include?('--baseline') &&
   abort 'baseline_requires_isolated_test_process'
 end
 Dir.chdir(File.expand_path('..', __dir__))
+if ARGV.include?('--suite') && ARGV.include?('full') &&
+    ARGV.include?('--target') && ARGV.include?('hardened_release')
+  exec(ENV.fetch('ANCHOR_PYTHON', 'python3'), '-m', 'labs.security_hardening.milestone', *ARGV)
+end
 exec('python3', '-m', 'eval.redteam_gate', *ARGV)
