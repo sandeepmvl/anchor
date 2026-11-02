@@ -1,0 +1,8 @@
+diff --git a/anchor_ai/runtime.py b/anchor_ai/runtime.py
+--- a/anchor_ai/runtime.py
++++ b/anchor_ai/runtime.py
+@@ -1,3 +1,3 @@
+             if action == 'retrieve' and not observation['hits']:
+-                return self.stop(s, 'exhausted', 'evidence_exhausted')
++                self.event(s, 'escalation_missing_transition', reason='evidence_exhausted')
+             s['phase'] += 1

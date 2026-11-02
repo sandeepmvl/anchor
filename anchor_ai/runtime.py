@@ -170,6 +170,9 @@ class BoundedRuntime:
                               attempts=copy.deepcopy(s['attempts']),
                               proposed_action=s['arguments'], idempotency_key=s['key'],
                               tokens=s['tokens'], steps=s['steps'], calls=s['calls'])
+        if status in TERMINAL:
+            from anchor_ai.escalation import bounded_handoff
+            s['escalation'].update(bounded_handoff(s, reason))
         self.event(s, 'escalation', reason=reason, persisted=True)
         active = CURRENT.get()
         ctx = None if active else {'trace_id': s['trace_id'], 'request_id': s['run_id'],
@@ -276,6 +279,10 @@ class BoundedRuntime:
             return False
 
     async def loop(self, scope, s):
+        # Also protect internal/delegated callers entering from a saved checkpoint.
+        if (s['status'] in TERMINAL
+                or s.get('escalation', {}).get('do_not_retry') is True):
+            return s
         while s['phase'] < len(s['plan']):
             if not self.incident_allowed(scope):
                 s['reply'] = ('Automatic processing is unavailable. Your ticket is being handed '
@@ -381,6 +388,8 @@ class BoundedRuntime:
                        idempotency_key=s['key'] if action == 'issue_refund' else None)
             s['memory'].append(dict(action=action, observation=observation))
             self.event(s, 'memory_write', outcome='success')
+            if action == 'retrieve' and not observation['hits']:
+                return self.stop(s, 'exhausted', 'evidence_exhausted')
             s['phase'] += 1
             s['pending'] = None
             self.save(s)

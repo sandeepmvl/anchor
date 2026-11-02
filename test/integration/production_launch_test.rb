@@ -15,6 +15,7 @@ if ARGV.delete('--deployed')
     test/integration/release_pointer_rollback_test.rb
     test/integration/state_recovery_test.rb
     test/integration/human_only_mode_test.rb
+    test/agents/bounded_agent_test.rb
   ]
   Dir.chdir(root) do
     exit(system(RbConfig.ruby, 'bin/rails', 'test', *suites) ? 0 : 1)
@@ -25,6 +26,13 @@ require 'minitest/autorun'
 require 'open3'
 
 class ProductionLaunchContractTest < Minitest::Test
+  def test_interview_fix_preserves_terminal_escalation
+    root = File.expand_path('../..', __dir__)
+    output, status = Open3.capture2e(RbConfig.ruby,
+      'test/agents/bounded_agent_test.rb', chdir: root)
+    assert status.success?, output
+  end
+
   def test_real_infrastructure_is_required
     root = File.expand_path('../..', __dir__)
     output, status = Open3.capture2e(ENV.fetch('ANCHOR_PYTHON', 'python3'), '-c',

@@ -238,6 +238,27 @@ def inference_handoff(context, reason):
             'context': redact({key: context[key] for key in required})}
 
 
+def bounded_handoff(state, reason):
+    """Snapshot trusted runtime state; a handoff grants no tool authority."""
+    from copy import deepcopy
+    from .pii import redact_value
+    context = dict(
+        tenant_id=state['tenant_id'], conversation_id=state['conversation_id'],
+        trace_id=state['trace_id'], run_id=state['run_id'],
+        messages=[state['message']], evidence=deepcopy(state['memory']),
+        plan=deepcopy(state['plan']), plan_position=state['phase'],
+        remaining_budget={
+            'steps': max(0, state['caps']['max_steps'] - state['steps']),
+            'tokens': max(0, state['caps']['max_tokens'] - state['tokens']),
+            'calls': max(0, state['caps']['max_calls'] - state['calls']),
+            'cost_units': max(0, state['caps']['max_cost_units'] - state['cost_units'])},
+        attempts=deepcopy(state['attempts']), pending_action=deepcopy(state['pending']),
+        committed_actions=deepcopy(state['memory']),
+        orchestration=deepcopy(state.get('orchestration')))
+    return redact_value(dict(human_handoff=True, do_not_retry=True,
+                             reason=reason, tool_calls=[], context=context))
+
+
 def realtime_handoff(payload):
     required = {'scope', 'reason', 'transcript', 'heard', 'evidence',
                 'pending_action', 'approval_required'}
