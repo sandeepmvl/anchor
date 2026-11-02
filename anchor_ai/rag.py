@@ -120,9 +120,9 @@ def fixture_runtime(tenant_id=1, emit=None):
 
 
 def published_runtime(snapshot, tenant_id, embedding_client, emit=None):
-    from anchor_ai.dense_retriever import DenseRetriever
+    from anchor_ai.dense_retriever import DenseRetrieveriever
     from anchor_ai.llm_client import LlmClient
-    return RagRuntime(DenseRetriever(snapshot, tenant_id, embedding_client),
+    return RagRuntime(DenseRetrieveriever(snapshot, tenant_id, embedding_client),
                       ExistingClientAdapter(LlmClient()), emit=emit)
 
 
@@ -212,3 +212,36 @@ def published_bounded_rag_runtime(tenant_id, acquire_snapshot, dense_search,
     return RagRuntime(hybrid, client if client is not None else model_client(),
                       emit=emit,
                       evidence_budget=multihop_settings()['evidence_budget_bytes'])
+
+
+class GraphRagRuntime:
+    def __init__(self, retriever, emit=None):
+        self.retriever = retriever
+        self.emit = emit or (lambda record: None)
+
+    async def answer(self, request, *, request_id, trace_id):
+        from anchor_ai.graph_retriever import path_answer
+        from anchor_ai.schemas import GraphRelationshipRequest
+        if not isinstance(request, GraphRelationshipRequest):
+            request = GraphRelationshipRequest.model_validate(request)
+        started = time.monotonic()
+        report = self.retriever.retrieve(request.question, request.terms)
+        self.last_report = report
+        result = path_answer(report)
+        self.emit(dict(event='graph_rag', request_id=request_id, trace_id=trace_id,
+            tenant_id=report['tenant_id'], scope=report['scope'],
+            generation_id=report['generation_id'], linked_ids=report['linked_ids'],
+            status=report['status'], citations=result['citations'],
+            latency_ms=round((time.monotonic() - started) * 1000, 3)))
+        return result
+
+
+def published_graph_rag_runtime(db, tenant_id, scope, emit=None):
+    from pathlib import Path
+    import yaml
+    from anchor_ai.graph_retriever import GraphRetriever
+    from anchor_ai.schemas import GraphLimits
+    path = Path(__file__).resolve().parents[1] / 'config/retrieval.yml'
+    limits = GraphLimits.model_validate(yaml.safe_load(path.read_text())['graph'])
+    return GraphRagRuntime(GraphRetriever(db, tenant_id, scope,
+        **limits.model_dump()), emit=emit)

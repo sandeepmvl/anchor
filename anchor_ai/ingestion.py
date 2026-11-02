@@ -93,6 +93,26 @@ def sync_directory(db, tenant_id, directory, client=None, chunker_version='sente
     return result
 
 
+def ingest_graph_records(db, tenant_id, path, client=None):
+    from .index_maintenance import maintain_document, valid_tenant
+    from .graph_index import validate_records
+    valid_tenant(tenant_id)
+    path = Path(path)
+    if path.suffix == '.jsonl':
+        records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    else:
+        records = json.loads(path.read_text())['records']
+    results = []
+    for record in records:
+        if record['tenant_id'] != tenant_id:
+            raise ValueError('graph_tenant_mismatch')
+        validate_records(record['nodes'], record['edges'])
+        metadata = {'graph': {'nodes': record['nodes'], 'edges': record['edges']}}
+        results.append(maintain_document(db, tenant_id, record['source_doc'],
+            prepare(record['text']), metadata, 'sentence-v1', record['scope'], client=client))
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['stage', 'ingest'])

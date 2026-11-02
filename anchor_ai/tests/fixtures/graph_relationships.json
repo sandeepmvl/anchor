@@ -1,0 +1,29 @@
+{
+  "schema": [
+    "CREATE TABLE documents(id INTEGER PRIMARY KEY,tenant_id INTEGER,external_id TEXT,source_name TEXT,text TEXT,content_hash TEXT,status TEXT,metadata TEXT,metadata_hash TEXT,chunker_version TEXT,source_scope TEXT,created_at TEXT,updated_at TEXT)",
+    "CREATE TABLE retrieval_generations(id INTEGER PRIMARY KEY,tenant_id INTEGER,model TEXT,revision TEXT,dimensions INTEGER,status TEXT DEFAULT 'building',active INTEGER DEFAULT 0,vector_column TEXT DEFAULT 'embedding_v2',base_generation_id INTEGER,epoch INTEGER DEFAULT 0)",
+    "CREATE TABLE document_chunks(id INTEGER PRIMARY KEY,tenant_id INTEGER,document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,retrieval_generation_id INTEGER,chunk_index INTEGER,parent_id INTEGER,is_leaf INTEGER,text TEXT,window_text TEXT,embedding TEXT,embedding_v2 TEXT,embedding_model TEXT,embedding_revision TEXT,embedding_dimensions INTEGER,source_hash TEXT,chunker_version TEXT,metadata TEXT,created_at TEXT,updated_at TEXT)"
+  ],
+  "records": [
+    {"tenant_id":1,"scope":"support","source_doc":"plans.md","text":"Pro belongs to Growth.","nodes":[{"id":"product:pro","type":"product","aliases":["Pro"]},{"id":"plan:growth","type":"plan","aliases":["Growth"]}],"edges":[{"source":"product:pro","relation":"on_plan","target":"plan:growth","passage":"Pro belongs to Growth."}]},
+    {"tenant_id":1,"scope":"support","source_doc":"policies.md","text":"Growth uses the renewal policy.","nodes":[{"id":"plan:growth","type":"plan","aliases":["Growth"]},{"id":"policy:renewal","type":"policy","aliases":["renewal policy"]}],"edges":[{"source":"plan:growth","relation":"uses_policy","target":"policy:renewal","passage":"Growth uses the renewal policy."}]},
+    {"tenant_id":1,"scope":"support","source_doc":"exceptions.md","text":"The renewal policy grants the renewal exception.","nodes":[{"id":"policy:renewal","type":"policy","aliases":["renewal policy"]},{"id":"exception:renewal","type":"exception","aliases":["renewal exception"]},{"id":"exception:delayed","type":"exception","aliases":["delayed exception"]}],"edges":[{"source":"policy:renewal","relation":"grants_exception","target":"exception:renewal","passage":"The renewal policy grants the renewal exception."}]},
+    {"tenant_id":2,"scope":"support","source_doc":"beta.md","text":"The renewal policy grants the delayed exception.","nodes":[{"id":"policy:renewal","type":"policy","aliases":["renewal policy"]},{"id":"exception:delayed","type":"exception","aliases":["delayed exception"]}],"edges":[{"source":"policy:renewal","relation":"grants_exception","target":"exception:delayed","passage":"The renewal policy grants the delayed exception."}]}
+  ],
+  "questions": [
+    {"id":"renewal","question":"Which product inherits the renewal exception through its plan? Check Pro.","terms":["Pro","renewal exception"],"expected":"supported"},
+    {"id":"delayed","question":"Does Pro inherit the delayed exception?","terms":["Pro","delayed exception"],"expected":"unsupported"},
+    {"id":"unknown","question":"Does Pro inherit the seasonal exception?","terms":["Pro","seasonal exception"],"expected":"unlinked"}
+  ],
+  "text_steps": [
+    {"query":"Pro","passage":"Pro belongs to Growth.","next_query":"Growth"},
+    {"query":"Growth","passage":"Growth uses the renewal policy.","next_query":"renewal policy"},
+    {"query":"renewal policy","passage":"The renewal policy grants the renewal exception.","next_query":null}
+  ],
+  "expected_nodes": [
+    "product:pro",
+    "plan:growth",
+    "policy:renewal",
+    "exception:renewal"
+  ]
+}

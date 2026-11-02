@@ -177,3 +177,21 @@ class MultiHopPlan(QueryPlanPayload):
         if '{' in remainder or '}' in remainder:
             raise ValueError('unsupported_binding')
         return self
+
+
+class GraphRelationshipRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    question: str = Field(min_length=1, max_length=1800)
+    terms: list[str] = Field(min_length=2, max_length=2)
+
+    @model_validator(mode='after')
+    def terms_present(self):
+        if any(not term.strip() or len(term) > 300 for term in self.terms):
+            raise ValueError('invalid_graph_terms')
+        return self
+
+
+class GraphLimits(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    max_depth: int = Field(default=3, ge=0, le=8)
+    max_expansions: int = Field(default=100, ge=1, le=10000)

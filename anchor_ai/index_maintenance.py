@@ -24,6 +24,8 @@ def transaction(db):
     db.execute('BEGIN IMMEDIATE')
     try:
         yield
+        from .graph_index import refresh_graph
+        refresh_graph(db)
         db.commit()
     except Exception:
         db.rollback()

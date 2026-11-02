@@ -99,3 +99,7 @@ multihop:
   mode_env: ANCHOR_LLM_MODE
   fixture_env: ANCHOR_MULTIHOP_FIXTURE
   url: http://127.0.0.1:8000/v1/rag
+
+graph:
+  max_depth: 3
+  max_expansions: 100
