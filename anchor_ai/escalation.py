@@ -228,6 +228,16 @@ def incomplete_handoff(trusted, error, *, boundary):
             'next_action': 'authenticated human investigation'}
 
 
+def inference_handoff(context, reason):
+    required = {'tenant_id', 'conversation_id', 'messages', 'evidence',
+                'plan_position', 'remaining_budget', 'committed_actions', 'trace_id'}
+    if not isinstance(context, dict) or not required <= set(context):
+        raise ValueError('incomplete_inference_handoff')
+    return {'status': 'human_escalation', 'human_handoff': True,
+            'reason': reason, 'tool_calls': [], 'do_not_retry': True,
+            'context': redact({key: context[key] for key in required})}
+
+
 def realtime_handoff(payload):
     required = {'scope', 'reason', 'transcript', 'heard', 'evidence',
                 'pending_action', 'approval_required'}

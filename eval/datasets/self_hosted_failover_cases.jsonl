@@ -1,0 +1,4 @@
+{"id":"eligible-outage","tenant":1,"stopped":true,"expected":"primary"}
+{"id":"private-outage","tenant":2,"stopped":true,"expected":"human_escalation"}
+{"id":"human-only","tenant":3,"stopped":false,"expected":"human_escalation"}
+{"id":"healthy-local","tenant":1,"stopped":false,"expected":"local"}

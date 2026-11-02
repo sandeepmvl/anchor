@@ -270,6 +270,14 @@ def main():
         verdict['rows']['security'] = 'failed'
     else:
         verdict['rows']['security'] = 'passed'
+    if os.environ.get('ANCHOR_SELF_HOSTED_RELEASE') == '1':
+        from ops.deploy.self_hosted_release import require_production
+        try:
+            require_production(bundle.get('self_hosted'))
+        except ValueError:
+            verdict['passed'] = False
+            verdict['errors'].append('self_hosted_real_evidence_missing')
+            verdict['rows']['self_hosted'] = 'failed'
     save(WORK / 'evidence.json', bundle)
     from eval.dashboard import render
     summary = render(bundle, verdict)

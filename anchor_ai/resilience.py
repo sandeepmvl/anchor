@@ -156,6 +156,14 @@ class ResilienceBoundary:
         self.jitter = jitter or (lambda: random.uniform(0, policy['jitter_seconds']))
         self.emit = emit or (lambda record: None)
         self.active = 0
+        self.health_task = None
+
+    async def health_check_once(self, tenant_id):
+        """One bounded recovery sweep; schedule explicitly, never at import time."""
+        results = {}
+        for name in self.router.config['order']:
+            results[name] = await self.probe(name, tenant_id)
+        return results
 
     def event(self, decision, attempts, delay=0):
         record = dict(decision=decision, attempts=attempts, delay_seconds=delay)

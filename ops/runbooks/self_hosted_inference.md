@@ -1,5 +1,68 @@
 # Self-hosted inference
 
+## Versioned release milestone
+
+The required entry points are anchor_ai/tests/test_self_hosted_release.py,
+test/integration/self_hosted_failover_test.rb, and
+ops/deploy/self_hosted_release.py. The Ruby test is a standalone boundary
+contract, not a booted Rails endpoint test. The harness uses a fixture ledger;
+production retains RoutingProvider.physical and its verified Rails quota scope.
+No tool executor runs in this generation-only harness. Existing confirmation,
+dry-run, reversal, authorization, quota, and trajectory tests remain required.
+
+ServingProfiles snapshots immutable profiles and atomically replaces a single-host
+pointer. New requests pin the new pointer; in-flight requests finish with their
+original snapshot. Select previous to roll back model, prompt, index and routing
+versions without changing app code. Never replay committed tool actions. Unknown
+tool outcomes require reconciliation, not a new model's guess. Multi-host pointer
+distribution requires a separately reviewed transactional control plane.
+
+Use the reviewed matrix as a recommendation only. The release builder opts in
+chat and leaves unsupported workloads ineligible. Intersect approved providers,
+region, evaluated model, readiness, workload and external-processing permission.
+Missing permission means human escalation. A cache key includes the effective
+policy, tenant, conversation, profile and committed context; incompatible changes
+cannot reuse an earlier answer. Old entries need normal bounded cache eviction
+before this illustrative in-memory cache is used in a long-lived service.
+
+For startup, validate ops/deploy/vllm_service.yml, approved immutable artifacts,
+model alias and private endpoint before enabling the cohort. Existing defaults
+remain hosted. Probe readiness and synthetic generation separately. Schedule
+ResilienceBoundary.health_check_once with a bounded operator-owned scheduler;
+never start background tasks at import. Probes consume their own accounted
+physical sends. Ordinary requests never bypass an open circuit. Offline release
+profiles use two total attempts, no per-provider retry, a shared deadline,
+one-second cooldown and two successful recovery probes. These are fixture settings.
+
+For scaling, warm and verify a new replica before admission. Confirm model and
+KV metric freshness, memory headroom, queue delay and hosted fallback capacity.
+Drain bounded in-flight requests before retiring the old replica. A process
+restart alone does not clear circuit state. After crash or stall repair, require
+cooldown and consecutive successful probes before returning local traffic.
+
+The emergency kill switch is ReleaseService.human_only, set only by trusted
+operator control. It bypasses cache and models and returns redacted messages,
+evidence, plan position, remaining budget, trace and committed action references.
+Bind this control to authenticated operations configuration before production.
+Do not expose it as a customer request parameter. Human-only prohibits new
+side-effecting actions; pre-existing committed actions remain visible as context.
+
+Monitor selected versus served profile/provider, circuit skips, readiness,
+recovery probes, deadline and timeout counts, handoff count, queue delay, KV
+pressure, hosted quota, latency and error rate. Correlate spans using trace IDs;
+do not log prompt bodies. Page inference on-call for local failures or readiness/
+generation disagreement; page Anchor application on-call for failed ticket
+completion or exhausted fallback quota. Escalate dual failure to the support
+incident commander and force human-only mode. Bind these roles to the paging
+directory and configure SLO-based alert thresholds before production approval.
+Missing role bindings or thresholds block operational handoff.
+
+The accumulated release gate still requires unit, retrieval, trajectory, golden
+quality and calibrated judge evidence. Set ANCHOR_SELF_HOSTED_RELEASE=1 for a
+self-hosted production candidate. Missing real infrastructure evidence remains
+fail-closed even if every offline test passes. The offline gate command captures
+and prints this expected refusal; it is not a successful deployment.
+
 ## Required offline evidence
 
 Run the adapter tests, the inherited Rails chat quota/isolation regressions,

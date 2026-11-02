@@ -1,0 +1,24 @@
+name: self-hosted-eval
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  offline-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+      - run: python -m pip install -r anchor_ai/requirements.txt pytest numpy
+      - run: python -m pytest -q anchor_ai/tests/test_self_hosted_release.py
+      - run: ruby test/integration/self_hosted_failover_test.rb
+      - run: python labs/self-hosted-release/cpu_mechanisms.py
+      - run: python -m ops.deploy.self_hosted_release gate
+      - run: python -m eval.release_gate smoke --regressed --expect-blocked
+# Configure this job as a required status alongside the inherited unit,
+# retrieval, trajectory and quality workflows. Branch protection is an
+# operator setting, not something an offline test can verify.

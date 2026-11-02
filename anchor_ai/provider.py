@@ -54,6 +54,25 @@ def routing_configuration(path='config/provider_routing.yml'):
     return c
 
 
+def release_eligible(router, name, tenant_id, payload, release):
+    """Trusted configuration only; customer payloads cannot grant permission."""
+    if release.get('human_only') is not False:
+        return False
+    workload = getattr(router, 'release_workload', None)
+    rule = release.get('tenants', {}).get(tenant_id, {}).get(workload, {})
+    deployment = router.config['deployments'][name]
+    if (rule.get('mode') not in {'local', 'hosted'}
+            or deployment.get('ready') is not True
+            or workload not in deployment.get('workloads', [])):
+        return False
+    local = deployment.get('backend') == 'self_hosted'
+    if rule['mode'] == 'hosted' and local:
+        return False
+    if not local and rule.get('external_processing') is not True:
+        return False
+    return name in rule.get('approved', [])
+
+
 AVAILABILITY = frozenset({'provider_timeout', 'provider_transport_error',
                           'provider_unavailable', 'provider_rate_limited'})
 
@@ -130,6 +149,10 @@ class RoutingProvider:
         emit_provider_routing(record)
 
     def eligible(self, name, tenant_id, payload):
+        release = self.config.get('self_hosted_release')
+        if release is not None:
+            if not release_eligible(self, name, tenant_id, payload, release):
+                return False
         policy = self.config['tenants'].get(tenant_id, {})
         d = self.config['deployments'][name]
         return (name in policy.get('approved', []) and d['region'] in policy.get('regions', [])

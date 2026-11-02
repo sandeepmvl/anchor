@@ -1,4 +1,6 @@
 fixture: true
+# Release routing is opt-in through ops/deploy/self_hosted_release.py.
+# Existing defaults and their regression contracts remain unchanged.
 sdk_retries: 0
 logical_model: support-answer
 threshold: 2

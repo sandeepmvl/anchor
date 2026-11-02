@@ -19,9 +19,12 @@ class OfflineVllmServer:
         self.last_payload = None
         self.block = False
         self.cancelled = False
+        self.stopped = False
 
     async def __call__(self, request):
         self.calls += 1
+        if self.stopped:
+            raise httpx.ConnectError('offline vllm stopped', request=request)
         if self.block:
             try:
                 await asyncio.Event().wait()

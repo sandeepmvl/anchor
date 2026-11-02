@@ -15,3 +15,9 @@ max_inflight: 4
 sdk_retries: 0
 record_content: false
 retry_owner: resilience
+# Release profiles override retries_per_provider to zero, retaining one shared
+# two-attempt budget across local and hosted. Recovery probes are separate.
+self_hosted_release:
+  max_attempts: 2
+  retries_per_provider: 0
+  health_interval_seconds: 1
