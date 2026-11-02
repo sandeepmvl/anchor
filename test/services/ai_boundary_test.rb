@@ -26,7 +26,10 @@ class AiBoundaryTest < ActiveSupport::TestCase
         "Content-Type" => "application/json"
       },
       body: JSON.generate(version: "v1", conversation_id: 1, message: "Hello", tenant_id: 1)
-    )
+    ) do |request|
+      /\A00-[0-9a-f]{32}-[0-9a-f]{16}-01\z/.match?(request.headers['Traceparent'].to_s) &&
+        !request.headers['X-Request-Id'].to_s.empty?
+    end
   end
 
   test "sends the versioned contract and service credential" do

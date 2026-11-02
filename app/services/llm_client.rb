@@ -45,6 +45,12 @@ class LlmClient
   end
 
   def http_complete(message)
+    AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
+      perform_http_complete(message, span)
+    end
+  end
+
+  def perform_http_complete(message, span)
     config = YAML.safe_load(ERB.new(Rails.root.join("config/llm.yml").read).result).fetch("shared")
     uri = URI(config.fetch("url"))
     secret = ENV.fetch("ANCHOR_AI_SECRET")
@@ -61,11 +67,13 @@ class LlmClient
     request = Net::HTTP::Post.new(uri.request_uri)
     request["Content-Type"] = "application/json"
     request["X-Anchor-Secret"] = secret
+    span.headers.each { |key, value| request[key] = value }
     request.body = JSON.generate(
       version: "v1", conversation_id: 1, message: message, tenant_id: 1
     )
     response = http.request(request)
     status = response.code.to_i
+    span.set(status_code: status)
     provider_failure(response, status) unless (200..299).cover?(status)
     fail_boundary("ai_auth_rejected", 502) if status == 401
     fail_boundary("ai_contract_rejected", 502) if status == 422

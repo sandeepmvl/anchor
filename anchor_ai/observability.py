@@ -1,0 +1,115 @@
+import contextvars
+import json
+import logging
+import re
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from decimal import Decimal
+
+CURRENT = contextvars.ContextVar('anchor_span', default=None)
+LOGGER = logging.getLogger('anchor.telemetry')
+if not LOGGER.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    LOGGER.addHandler(handler)
+LOGGER.setLevel(logging.INFO)
+LOGGER.propagate = False
+SINK = lambda record: LOGGER.info(json.dumps(record, separators=(',', ':')))
+# USD / million tokens. Verify against https://openai.com/api/pricing/ before live use.
+PRICE_VERSION = 'gpt-4o-mini-standard-2024-07'
+PRICES = {'gpt-4o-mini': {'input': '0.15', 'cached_input': '0.075',
+                         'cache_write_input': '0', 'output': '0.60'}}
+FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model',
+          'response_model', 'provider_request_id', 'tokens', 'cost_estimate',
+          'currency', 'cost_basis', 'price_version', 'attempts'}
+ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
+          'internal_error', 'provider_bad_request', 'provider_auth_failed',
+          'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
+          'provider_rate_limited', 'provider_unknown_429', 'provider_unavailable',
+          'provider_transport_error', 'provider_timeout', 'invalid_provider_response',
+          'missing_provider_key', 'invalid_provider_mode', 'provider_rejected'}
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+
+
+def safe_id(value):
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', value) else None
+
+
+def context(headers):
+    value = headers.get('traceparent', '')
+    match = re.fullmatch(r'00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})', value)
+    valid = match and int(match[1], 16) and int(match[2], 16)
+    return {'request_id': safe_id(headers.get('x-request-id')) or uuid.uuid4().hex,
+            'trace_id': match[1] if valid else uuid.uuid4().hex,
+            'parent_span_id': match[2] if valid else None}
+
+
+def tokens_from_usage(usage):
+    data = usage.model_dump() if hasattr(usage, 'model_dump') else usage
+    prompt, output = data['prompt_tokens'], data['completion_tokens']
+    cached = (data.get('prompt_tokens_details') or {}).get('cached_tokens', 0)
+    reasoning = (data.get('completion_tokens_details') or {}).get('reasoning_tokens')
+    if cached > prompt or (reasoning is not None and reasoning > output):
+        raise ValueError('invalid usage subsets')
+    return {'input': prompt - cached, 'cached_input': cached, 'cache_write_input': 0,
+            'output': output, 'reasoning': reasoning}
+
+
+def estimate(model, tokens, prices=None):
+    rates = (PRICES if prices is None else prices).get(model)
+    if rates is None:
+        return None
+    return float(sum(Decimal(tokens[k]) * Decimal(rates[k]) for k in
+                     ('input', 'cached_input', 'cache_write_input', 'output')) / Decimal(1000000))
+
+
+class Span:
+    def __init__(self, name, ctx=None, **fields):
+        parent = CURRENT.get()
+        ctx = ctx or ({'request_id': parent.record['request_id'],
+                       'trace_id': parent.record['trace_id'],
+                       'parent_span_id': parent.record['span_id']} if parent else context({}))
+        self.record = dict(event='span', name=name, **ctx, span_id=uuid.uuid4().hex[:16],
+                           started_at=now(), status='ok', error_type=None,
+                           error_message=None, tokens=None, cost_estimate=None)
+        self.started = time.monotonic()
+        self.set(**fields)
+
+    def set(self, **fields):
+        for key, value in fields.items():
+            if key not in FIELDS:
+                raise ValueError('non-allowlisted telemetry field')
+            if key in {'request_model', 'response_model', 'provider_request_id'}:
+                value = safe_id(value)
+            if key in {'tenant_id', 'conversation_id'} and (type(value) is not int or value <= 0):
+                continue
+            self.record[key] = value
+
+    def fail(self, code, status=None):
+        code = code if code in ERRORS else 'internal_error'
+        self.record.update(status='error', error_type=code, error_message=code)
+        if status is not None:
+            self.set(status_code=status)
+
+    def finish(self):
+        self.record.update(ended_at=now(), latency_ms=round((time.monotonic() - self.started) * 1000, 3))
+        SINK(dict(self.record))
+
+
+@contextmanager
+def span(name, ctx=None, **fields):
+    item = Span(name, ctx, **fields)
+    token = CURRENT.set(item)
+    try:
+        yield item
+    except BaseException as error:
+        item.fail(getattr(error, 'code', 'internal_error'), getattr(error, 'status', None))
+        raise
+    finally:
+        CURRENT.reset(token)
+        item.finish()

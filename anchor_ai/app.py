@@ -2,37 +2,69 @@ import hmac
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, FastAPI, Header, HTTPException
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 try:
     from .contracts import InferRequest, InferResponse
     from .llm_client import LlmClient
     from .provider import ProviderError
+    from .observability import span, context
 except ImportError:
     from contracts import InferRequest, InferResponse
     from llm_client import LlmClient
     from provider import ProviderError
+    from observability import span, context
 
 app = FastAPI()
-router = APIRouter(prefix="/v1")
+router = APIRouter(prefix='/v1')
 
 
-@router.post("/infer", response_model=InferResponse)
+@app.middleware('http')
+async def telemetry(request: Request, call_next):
+    with span('python.infer', context(request.headers), stage='validation') as item:
+        request.state.telemetry = item
+        response = await call_next(request)
+        item.set(status_code=response.status_code)
+        if response.status_code >= 400 and item.record['status'] != 'error':
+            item.fail('internal_error', response.status_code)
+        response.headers['X-Request-Id'] = item.record['request_id']
+        return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_failed(request: Request, error: RequestValidationError):
+    request.state.telemetry.set(stage='validation')
+    request.state.telemetry.fail('validation_failed', 422)
+    # Do not serialize error.errors(): it includes the rejected input.
+    return JSONResponse(status_code=422, content={'detail': 'validation_failed'})
+
+
+@router.post('/infer', response_model=InferResponse, response_model_exclude_none=True)
 async def infer(
     body: InferRequest,
+    request: Request,
     x_anchor_secret: Annotated[str | None, Header()] = None,
 ) -> InferResponse:
-    expected = os.environ.get("ANCHOR_AI_SECRET")
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
     if not expected:
-        raise HTTPException(status_code=503, detail="service_not_configured")
-    supplied = (x_anchor_secret or "").encode("utf-8")
-    if not hmac.compare_digest(supplied, expected.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="service_auth_failed")
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    supplied = (x_anchor_secret or '').encode('utf-8')
+    if not hmac.compare_digest(supplied, expected.encode('utf-8')):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    item.set(stage='provider')
     try:
         return await LlmClient().complete_result(body.message)
     except ProviderError as error:
+        item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
 
 
 app.include_router(router)
-app.add_api_route("/infer", infer, methods=["POST"], response_model=InferResponse)
+app.add_api_route('/infer', infer, methods=['POST'], response_model=InferResponse,
+                  response_model_exclude_none=True)
