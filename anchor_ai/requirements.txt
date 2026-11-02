@@ -10,3 +10,5 @@ faiss-cpu>=1.10,<2
 rank-bm25==0.2.2
 
 # Triad replay uses the standard library; RAGAS and TruLens SDKs are optional.
+
+# LoRA contract validation and geometry use existing dependencies; no PEFT or GPU required.

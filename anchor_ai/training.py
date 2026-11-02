@@ -45,9 +45,77 @@ def analyze_loss(rows):
             'interpretation': status, 'loss_digest': digest(rows)}
 
 
+# Recorded projection shapes: (input width, output width, occurrences).
+# Real training must compare this inventory with the loaded model's modules.
+LORA_INVENTORY = {
+    'q_proj': (896, 896, 24),
+    'k_proj': (896, 128, 24),
+    'v_proj': (896, 128, 24),
+    'o_proj': (896, 896, 24),
+    'up_proj': (896, 4864, 24),
+    'gate_proj': (896, 4864, 24),
+    'down_proj': (4864, 896, 24),
+}
+
+
+def validate_adapter(spec):
+    request = spec.get('adapter')
+    if request is None:
+        return None
+    if spec['base_model'] != 'Qwen/Qwen2.5-0.5B-Instruct':
+        raise ValueError('unsupported_adapter_inventory')
+    rank = request.get('rank')
+    alpha = request.get('alpha')
+    targets = request.get('target_modules')
+    if type(rank) is not int or rank < 1:
+        raise ValueError('invalid_adapter_rank')
+    if type(alpha) not in (int, float) or not math.isfinite(alpha) or alpha <= 0:
+        raise ValueError('invalid_adapter_alpha')
+    if (not isinstance(targets, list) or not targets
+            or any(not isinstance(t, str) or t not in LORA_INVENTORY for t in targets)
+            or len(set(targets)) != len(targets)):
+        raise ValueError('invalid_adapter_targets')
+    modules = []
+    for name in sorted(targets):
+        inputs, outputs, count = LORA_INVENTORY[name]
+        if rank > min(inputs, outputs):
+            raise ValueError('invalid_adapter_rank')
+        modules.append({'target': name, 'input': inputs, 'output': outputs,
+                        'occurrences': count,
+                        'trainable_parameters': count * rank * (inputs + outputs)})
+    parameters = sum(m['trainable_parameters'] for m in modules)
+    budget = request.get('max_trainable_parameters')
+    if type(budget) is not int or budget < 1 or parameters > budget:
+        raise ValueError('adapter_parameter_budget_exceeded')
+    base_count = spec['settings']['parameter_count']
+    return {'method': 'lora', 'rank': rank, 'alpha': alpha,
+            'scaling_rule': 'alpha/r', 'effective_scale': alpha / rank,
+            'target_modules': sorted(targets), 'modules': modules,
+            'trainable_parameters': parameters,
+            'max_trainable_parameters': budget,
+            'trainable_percent_of_declared_base': 100 * parameters / base_count,
+            'base_parameter_count': base_count, 'base_weights_frozen': True,
+            'bias': 'none', 'dropout': 0.0, 'use_rslora': False,
+            'inventory_source': 'recorded_shapes_not_loaded_model_inspection',
+            'evidence_status': 'configuration_only_not_adapter_training',
+            'total_training_memory_measured': False}
+
+
+def lora_forward(weight, a, b, x, alpha):
+    import numpy as np
+    if (weight.ndim != 2 or a.ndim != 2 or b.ndim != 2
+            or a.shape[0] < 1 or a.shape[1] != weight.shape[1]
+            or b.shape != (weight.shape[0], a.shape[0])):
+        raise ValueError('invalid_adapter_shapes')
+    if type(alpha) not in (int, float) or not math.isfinite(alpha) or alpha <= 0:
+        raise ValueError('invalid_adapter_alpha')
+    return np.matmul(weight, x) + (alpha / a.shape[0]) * np.matmul(b, np.matmul(a, x))
+
+
 def experiment(policy=None):
     policy = load_policy() if policy is None else policy
     spec = policy['sft']
+    adapter = validate_adapter(spec)
     rows = spec['recorded_rows']
     ids = {row['id']: row for row in rows}
     if len(ids) != len(rows):
@@ -86,6 +154,8 @@ def experiment(policy=None):
                 ('base_model', 'base_revision', 'tokenizer_revision',
                  'chat_template', 'settings', 'acceptance')}
     contract.update(lineage=lineage, loss_digest=selection['loss_digest'])
+    if adapter is not None:
+        contract.update(adapter=adapter)
     settings = spec['settings']
     return {'candidate': spec['candidate'], 'experiment_id': digest(contract),
             'evidence_status': RECORDED, 'lineage': lineage,

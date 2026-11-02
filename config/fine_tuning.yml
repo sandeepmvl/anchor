@@ -56,6 +56,12 @@ sft:
   base_revision: recorded-teaching-revision
   tokenizer_revision: recorded-teaching-revision
   chat_template: recorded-user-assistant-v1
+  # Proposed adapter; the settings and recordings below remain the full-SFT baseline.
+  adapter:
+    rank: 8
+    alpha: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, gate_proj, down_proj]
+    max_trainable_parameters: 4500000
   settings:
     full_parameter: true
     optimizer: AdamW
