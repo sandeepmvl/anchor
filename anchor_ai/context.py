@@ -1,6 +1,7 @@
 import json
 import math
 from dataclasses import dataclass
+from anchor_ai.pii import redact, redact_value
 
 try:
     from .contracts import SummaryState
@@ -53,7 +54,7 @@ def request_count(messages):
 
 
 def wrapped(name, text):
-    return '<' + name + '>\n' + text + '\n</' + name + '>'
+    return '<' + name + '>\n' + redact(text) + '\n</' + name + '>'
 
 
 def message(name, text):
@@ -62,7 +63,6 @@ def message(name, text):
 
 
 def section_count(name, text):
-    # Each section pays for its JSON framing and a framing allowance.
     return request_count([message(name, text)])
 
 
@@ -86,10 +86,9 @@ def join(rows):
 
 
 def summary_messages(prior, rows):
-    return [{'role': 'system', 'content': SUMMARY_INSTRUCTION},
+    return redact_value([{'role': 'system', 'content': SUMMARY_INSTRUCTION},
             {'role': 'user', 'content': json.dumps(
-                {'prior_summary': prior, 'turns_to_fold': join(rows)},
-                ensure_ascii=False)}]
+                {'prior_summary': prior, 'turns_to_fold': join(rows)}, ensure_ascii=False)}])
 
 
 @dataclass
@@ -107,7 +106,7 @@ def screen_context_text(text):
     safe, flags = screen_customer(str(text))
     if flags:
         raise ContextError('injection_detected')
-    return safe
+    return redact(safe)
 
 
 async def assemble(contract, current, history, state, summarize):
@@ -115,15 +114,13 @@ async def assemble(contract, current, history, state, summarize):
     if evaluate(str(current), history).refused:
         raise ContextError('jailbreak_detected')
     current = screen_context_text(current)
-    history = [row.model_copy(update={'content': screen_context_text(row.content)})
-               for row in history]
+    history = [row.model_copy(update={'content': screen_context_text(row.content)}) for row in history]
     if state is not None:
         state = state.model_copy(update={'summary': screen_context_text(state.summary)}) if state.summary else state
     specs = sections(contract.max_tokens)
     caps = {s.name: s.cap for s in specs}
-    pinned = contract.template.replace('{{ticket}}',
-        'The current ticket is in the final current data section.')
-    # Reject mandatory content before even attempting a summary call.
+    pinned = redact(contract.template.replace('{{ticket}}',
+        'The current ticket is in the final current data section.'))
     for name, text in [('system', pinned), ('current', str(current))]:
         if section_count(name, text) > caps[name]:
             raise ContextError(name + ' exceeds its allocation')
@@ -149,10 +146,7 @@ async def assemble(contract, current, history, state, summarize):
     summary_calls = 0
     summary_input = 0
     if overflow or oversized_summary:
-        # Oversized incoming summaries are re-summarized first. The bounded
-        # source is marked when it cannot fit this separate request.
-        prior = summary
-        prior = clip(prior, SUMMARY_INPUT_CAP,
+        prior = clip(summary, SUMMARY_INPUT_CAP,
                      lambda value: request_count(summary_messages(value, [])))
         if not oversized_summary:
             older = rows[:len(rows) - len(tail)]
@@ -171,16 +165,13 @@ async def assemble(contract, current, history, state, summarize):
             if not isinstance(merged, str) or not merged.strip():
                 raise ValueError('empty summary')
             merged = screen_context_text(merged)
-            summary = clip(merged, caps['summary'],
-                           lambda value: section_count('summary', value))
+            summary = clip(merged, caps['summary'], lambda value: section_count('summary', value))
             version = SUMMARY_VERSION
             if prefix:
                 pointer = prefix[-1].position
         except Exception:
-            # Failure cannot make the reply unbounded or claim a successful fold.
             fallback = True
-            summary = clip(state.summary, caps['summary'],
-                           lambda value: section_count('summary', value))
+            summary = clip(state.summary, caps['summary'], lambda value: section_count('summary', value))
         if overflow:
             rows = tail
     values = {'system': pinned, 'summary': summary, 'retrieval': '',
@@ -192,8 +183,7 @@ async def assemble(contract, current, history, state, summarize):
     estimated = request_count(messages)
     assert estimated <= sum(sizes.values())
     assert estimated <= WINDOW - contract.max_tokens
-    result_state = SummaryState(summary=summary, prompt_version=version,
-                                folded_position=pointer)
+    result_state = SummaryState(summary=summary, prompt_version=version, folded_position=pointer)
     pending = sum(r.position > pointer and r not in tail for r in history)
     return Assembly(messages, result_state, {
         'counter': 'heuristic:utf8-bytes/3', 'context_margin': MARGIN,
@@ -203,9 +193,8 @@ async def assemble(contract, current, history, state, summarize):
         'estimated_input_tokens': estimated, 'output_reserve': contract.max_tokens,
         'context_window': WINDOW, 'pre_history_tokens': pre,
         'summary_calls': summary_calls, 'summary_input_tokens': summary_input,
-        'summary_output_cap': SUMMARY_OUTPUT_CAP,
-        'summary_version': version, 'folded_position': pointer,
-        'pending_messages': pending, 'context_fallback': fallback})
+        'summary_output_cap': SUMMARY_OUTPUT_CAP, 'summary_version': version,
+        'folded_position': pointer, 'pending_messages': pending, 'context_fallback': fallback})
 
 
 class PreparedPrompt(str):
@@ -223,7 +212,6 @@ def context_options(prompt):
 
 
 def attach_context(request):
-    # Imported lazily to avoid a contracts/context import cycle.
     try:
         from .contracts import ChatMessage
     except ImportError:
@@ -239,20 +227,21 @@ def pack_retrieved_evidence(hits, budget_bytes=600):
     from anchor_ai.injection_filter import quarantine
     hits, _ = quarantine(hits)
     envelope = {'label': 'UNTRUSTED_EVIDENCE', 'sources': []}
+
     def size(value):
         return len(json.dumps(value, ensure_ascii=False).encode('utf-8'))
+
     if type(budget_bytes) is not int or size(envelope) > budget_bytes:
         raise ContextError('evidence envelope exceeds its allocation')
     for hit in hits:
         candidate = {'label': envelope['label'], 'sources': envelope['sources'] + [
-            {'id': hit['id'], 'text': hit['text']}]}
+            {'id': hit['id'], 'text': redact(hit['text'])}]}
         if size(candidate) <= budget_bytes:
             envelope = candidate
     return envelope
 
 
 def agent_memory_prompt(question, memory, scope):
-    """Agent-only allowance; do not bypass assemble's existing chat budgets."""
     question = screen_context_text(question)
     if memory is None:
         return question
@@ -272,11 +261,10 @@ def pack_attachment_evidence(rows, *, tenant_id, conversation_id, budget_bytes=6
     sources = []
     for row in rows:
         item = Evidence.model_validate(row)
-        if (item.tenant_id != scope.tenant_id
-                or item.conversation_id != scope.conversation_id
+        if (item.tenant_id != scope.tenant_id or item.conversation_id != scope.conversation_id
                 or item.confidence < MIN_CONFIDENCE):
             raise ContextError('attachment_scope_rejected')
-        sources.append(item.model_dump())
+        sources.append(redact_value(item.model_dump()))
     envelope = {'label': 'UNTRUSTED_EVIDENCE', 'sources': sources}
     if (type(budget_bytes) is not int or budget_bytes <= 0
             or len(json.dumps(envelope).encode()) > budget_bytes):

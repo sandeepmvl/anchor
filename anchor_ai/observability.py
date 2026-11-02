@@ -63,7 +63,7 @@ ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'missing_provider_key', 'invalid_provider_mode', 'provider_rejected',
           'invalid_reasoning_effort', 'invalid_reasoning_limit',
           'unsupported_reasoning_model', 'replay_miss', 'client_disconnect',
-          'context_budget_exceeded'}
+          'context_budget_exceeded', 'pii_redaction_unavailable'}
 FIELDS.update({'sandbox_backend', 'sandbox_exit_reason', 'sandbox_output_bytes'})
 ERRORS.update({'isolation_unavailable', 'capacity_unavailable', 'tenant_quota',
                'unapproved_script', 'sandbox_unauthorized', 'confirmation_required',

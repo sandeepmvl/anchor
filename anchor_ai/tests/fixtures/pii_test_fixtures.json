@@ -1,0 +1,10 @@
+{
+  "message": "Paulo Santos, email paulo@example.test, card 4111 1111 1111 1111.",
+  "context": "Shipping address: 123 Any Street, Seattle, WA 98109",
+  "response": "Paulo Santos: reviewing card 4111 1111 1111 1111.",
+  "identifiers": ["Paulo Santos", "paulo@example.test", "4111 1111 1111 1111"],
+  "notes": "PRIVATE-NOTE-MUST-DISAPPEAR",
+  "ssn": "123-45-6789",
+  "phone": "206-555-0100",
+  "invalid_card": "4111 1111 1111 1112"
+}

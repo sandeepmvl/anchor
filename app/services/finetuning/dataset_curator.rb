@@ -84,6 +84,11 @@ module Finetuning
       safe = JSON.parse(stdout)
       raise 'invalid_redaction_batch' unless safe.is_a?(Array) && safe.length == eligible.length
       safe.each { |r| raise 'invalid_redaction_schema' unless r.keys.sort == %w[input label output] }
+      checked, _diagnostic, checked_status = Open3.capture3(@python,
+        File.join(ROOT, 'bin/redact_finetuning.py'), stdin_data: JSON.generate(safe))
+      unless checked_status.success? && JSON.parse(checked) == safe
+        raise 'finetuning_redaction_failed'
+      end
       # Raw transcript text is no longer used after the boundary.
       metadata = eligible.map { |r| r.slice('id', 'conversation_id', 'family_id', 'at') }
       eligible = payload = nil
@@ -143,7 +148,6 @@ module Finetuning
         'label_histograms' => splits.transform_values { |rows| rows.group_by { |r| r['label'] }.transform_values(&:length) },
         'files' => files, 'export_sha256' => {}
       }
-      # Only redacted rows reach storage. Publish the manifest last.
       FileUtils.mkdir_p(File.dirname(@out))
       files.each do |split, path|
         content = splits[split].map { |row| JSON.generate(row) + "\n" }.join

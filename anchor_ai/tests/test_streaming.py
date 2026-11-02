@@ -26,7 +26,8 @@ def test_closing_iterator_cancels_pending_read_and_closes_resources():
 
         response = stream_reply(provider(), interval=0.001)
         packets = [await anext(response), await anext(response)]
-        assert packets == [b'event: token\ndata: Refunds \n\n', b': ping\n\n']
+        assert packets == [b': ping\n\n', b': ping\n\n']
+        assert not any(b'event: token' in packet for packet in packets)
         await response.aclose()
         assert cancelled.is_set()
         assert closed.is_set()
@@ -156,12 +157,9 @@ def test_paced_disconnect_cancels_read_and_clears_buffer(monkeypatch):
 
         response = stream_reply(provider(), interval=.001,
                                 pacing={'chunk_chars': 2})
-        assert (await anext(response)).startswith(b'event: token')
-        # Advance the real async driver until it starts its next upstream read.
-        while not cancelled.is_set():
-            packet = await anext(response)
-            if packet == b': ping\n\n':
-                break
+        # No text reaches the pacer before complete-answer redaction.
+        assert await anext(response) == b': ping\n\n'
+        assert instances and not instances[0].buffer
         await response.aclose()
         assert cancelled.is_set() and closed.is_set()
         assert instances and not instances[0].buffer

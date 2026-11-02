@@ -15,7 +15,7 @@ class AiTelemetry
     invalid_retrieval_url retrieval_secret_required invalid_request_id
     invalid_traceparent retrieval_stream_not_supported
     rate_limit budget_exhausted quota_authority_unavailable quota_identity_required
-    quota_release_evidence_missing quota_bound_exceeded].freeze
+    quota_release_evidence_missing quota_bound_exceeded pii_redaction_unavailable].freeze
 
   class << self
     attr_writer :sink

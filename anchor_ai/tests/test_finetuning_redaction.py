@@ -64,10 +64,9 @@ def test_failed_redaction_returns_no_partial_output_or_sensitive_error(monkeypat
 
 
 def test_broken_redactor_aborts_product_export(tmp_path):
-    # Execute the real boundary with its redaction function deliberately broken.
     wrapper = tmp_path / 'broken-python'
     wrapper.write_text(
-        '#!/bin/sh\nexec "' + sys.executable + '" -c '\
+        '#!/bin/sh\nexec "' + sys.executable + '" -c '
         "\"import runpy; from anchor_ai import pii; "
         "pii.redact_finetuning_text=lambda value:value; "
         "runpy.run_path('bin/redact_finetuning.py', run_name='__main__')\"\n")
@@ -91,3 +90,21 @@ def test_sft_mapping_uses_only_response_text_as_completion():
     assert converted == [{'prompt': [{'role': 'user', 'content': safe[0]['input']}],
                           'completion': [{'role': 'assistant', 'content': safe[0]['output']}]}]
     assert 'label' not in converted[0]
+
+
+def test_billing_fixture_tokens_are_stable_and_absent_from_export(monkeypatch):
+    monkeypatch.setenv('ANCHOR_PII_HMAC_KEY', 'b9' * 32)
+    fixture = json.loads((Path(__file__).parent / 'fixtures/pii_test_fixtures.json').read_text())
+    rows = [{'input': 'Policy: returns within 30 days. ' + fixture['message'],
+             'output': fixture['response'], 'label': 'refund_review'}]
+    safe = pii.redact_finetuning_batch(rows)
+    assert pii.redact_finetuning_batch(safe) == safe
+    assert '[REDACTED_CARD_' in safe[0]['input']
+    result = subprocess.run([sys.executable, str(ROOT / 'bin/redact_finetuning.py')],
+                            input=json.dumps(rows), capture_output=True, text=True, check=True)
+    assert result.stderr == ''
+    exported = json.loads(result.stdout)
+    assert exported == safe
+    for identifier in fixture['identifiers']:
+        assert identifier not in result.stdout
+    assert pii.redact_finetuning_batch(exported) == exported

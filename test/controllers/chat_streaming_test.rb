@@ -16,6 +16,8 @@ if ENV['ANCHOR_STREAM_SMOKE'] == '1'
       def protect_from_forgery(**); end
       def skip_forgery_protection(**); end
       def around_action(*); end
+      def before_action(*, **); end
+      def rescue_from(*, **); end
     end
     attr_accessor :response
   end
@@ -25,6 +27,8 @@ if ENV['ANCHOR_STREAM_SMOKE'] == '1'
       @logger ||= Logger.new(File::NULL)
     end
   end
+
+  module AiQuotaEnforcement; end
 
   class LlmClient
     class BoundaryError < StandardError
@@ -38,6 +42,7 @@ if ENV['ANCHOR_STREAM_SMOKE'] == '1'
     end
   end
 
+  require_relative '../../app/services/pii_redaction_client'
   require_relative '../../app/services/ai_telemetry'
   require_relative '../../app/controllers/chat_controller'
 
@@ -78,6 +83,7 @@ if ENV['ANCHOR_STREAM_SMOKE'] == '1'
       LlmClient.source = lambda do |_message, writer|
         begin
           writer.call("event: token\ndata: Refunds\n\n")
+          writer.call(": ping\n\n")
           continued = true
         ensure
           closed = true
@@ -132,7 +138,7 @@ else
       stream_post
       assert_response :success
       assert_equal 'text/event-stream', response.media_type
-      assert_equal ['status', 'token', 'token', 'final'], response.body.scan(/^event: (.+)$/).flatten
+      assert_equal ['status', 'token', 'final'], response.body.scan(/^event: (.+)$/).flatten
       assert_includes response.body, text
       post '/chat', params: {message: 'Hello'}, as: :json
       assert_response :success
@@ -143,17 +149,20 @@ else
       [nil, LlmClient::BoundaryError.new('ai_read_timeout', 504)].each do |failure|
         source([token('Refunds ')], failure)
         stream_post
-        assert_equal ['status', 'token', 'error'], response.body.scan(/^event: (.+)$/).flatten
+        assert_equal ['status', 'error'], response.body.scan(/^event: (.+)$/).flatten
+        refute_includes response.body, 'Refunds '
       end
     end
 
     test 'runtime error and truncation remain distinct terminals' do
       source([token('Refunds '), "event: error\ndata: {}\n\n"])
       stream_post
-      assert_equal ['status', 'token', 'error'], response.body.scan(/^event: (.+)$/).flatten
+      assert_equal ['status', 'error'], response.body.scan(/^event: (.+)$/).flatten
+      refute_includes response.body, 'Refunds '
       source([token('Refunds '), final('Refunds ', true)])
       stream_post
       assert_equal ['status', 'token', 'final'], response.body.scan(/^event: (.+)$/).flatten
+      assert_includes response.body, 'Refunds '
       assert_includes response.body, '"truncated":true'
     end
 

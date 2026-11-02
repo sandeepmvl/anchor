@@ -6,6 +6,8 @@ class ChatController < ApplicationController
   skip_forgery_protection if: -> { action_name == 'create' && !stream_request? }
   class_attribute :answer_generator, default: nil
   around_action :profile_anchor_action
+  before_action :redact_chat_parameters, only: [:create, :cited]
+  rescue_from PiiRedactionClient::Unavailable, with: :pii_unavailable
 
   class ProtocolError < StandardError; end
 
@@ -32,6 +34,7 @@ class ChatController < ApplicationController
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
+      persist_pii_ingestion(message)
       # Python screens extracted KB evidence and customer text before generation.
       # Never promote message, history, or evidence into trusted approval context.
       retrieval = retrieval_settings
@@ -45,6 +48,8 @@ class ChatController < ApplicationController
           LlmClient.new.complete_retrieval(message, context: trusted,
             url: settings.fetch('url'), secret: ENV['ANCHOR_AI_SECRET'])
         end
+        result = PiiRedactionClient.value(result)
+        persist_pii_reply(result)
         render json: result
         return
       end
@@ -63,8 +68,10 @@ class ChatController < ApplicationController
       end
       unless stream_request?
         reply = AiTelemetry.measure('model') { LlmClient.new.complete(message) }
-        body = { reply: reply }
+        body = { reply: reply.to_s }
         body[:context_state] = reply.context_state if reply.respond_to?(:context_state)
+        body = PiiRedactionClient.value(body)
+        persist_pii_reply(body)
         render json: body
         return
       end
@@ -77,6 +84,15 @@ class ChatController < ApplicationController
       Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
         prompt_version: contract.fetch('version'))
     end
+  rescue LlmClient::BoundaryError => error
+    # Preserve the existing boundary contract without depending on lazy load-hook timing.
+    response.set_header('Retry-After', error.retry_after.to_s) unless error.retry_after.nil?
+    body = { error: error.code }
+    body.merge!(error.details) if error.code == 'invalid_model_output'
+    if error.code.start_with?('provider_')
+      body.merge!(retryable: error.retryable, retry_after: error.retry_after)
+    end
+    render json: body, status: error.status
   rescue ActiveRecord::RecordNotFound
     render json: { error: 'unknown_prompt_version' }, status: :unprocessable_entity
   ensure
@@ -94,6 +110,7 @@ class ChatController < ApplicationController
     result = answer_generator.call(question: question,
       tenant_id: claims.fetch('tenant_id').to_i,
       conversation_id: claims.fetch('conversation_id'))
+    result = PiiRedactionClient.value(result)
     answer = result.fetch('cited_answer')
     ids = result.fetch('retrieved_chunk_ids')
     version = result.fetch('prompt_version')
@@ -120,6 +137,37 @@ class ChatController < ApplicationController
   end
 
   private
+
+  def redact_chat_parameters
+    selected = params.permit!.to_h.slice('message', 'history', 'summary_state', 'context')
+    safe = PiiRedactionClient.value(selected)
+    safe.each { |key, value| params[key] = value }
+    params.delete(:notes)
+    params.delete(:private_notes)
+  end
+
+  def persist_pii_ingestion(message)
+    return unless params[:ticket_id].present?
+    ticket = TicketAccessPolicy.new(session).ticket(params[:ticket_id])
+    @pii_conversation = Conversation.create!(organization_id: ticket.organization_id,
+      ticket_id: ticket.id, pii_payload: {'ingestion' => message.to_s})
+  rescue TicketAccessPolicy::Unauthenticated
+    head :unauthorized
+    throw :abort
+  end
+
+  def persist_pii_reply(value)
+    return unless @pii_conversation
+    @pii_conversation.update!(pii_payload: @pii_conversation.pii_payload.merge('response' => value))
+  end
+
+  def pii_unavailable
+    if stream_request? && response.committed?
+      write_stream_error('pii_redaction_unavailable')
+    else
+      render json: {error: 'pii_redaction_unavailable'}, status: :service_unavailable
+    end
+  end
 
   def profile_anchor_action
     context = AiTelemetry.context(request_id: request.request_id,
@@ -172,14 +220,19 @@ class ChatController < ApplicationController
           .map { |line| line.delete_prefix('data:').delete_prefix(' ') }.join("\n")
         case name
         when 'token'
-          write_stream_packet(packet, token: !data.empty?)
           text << data
+          raise ProtocolError if text.length > 65_536
         when 'final'
           payload = JSON.parse(data)
           raise ProtocolError unless payload.is_a?(Hash) && payload['content'] == text &&
             payload['citations'].is_a?(Array) && payload['citations'].all? { |c| c.is_a?(String) } &&
             [true, false].include?(payload['truncated'])
-          write_stream_packet(packet)
+          payload = PiiRedactionClient.value(payload)
+          safe_text = payload.fetch('content')
+          persist_pii_reply(payload)
+          encoded = safe_text.split("\n", -1).map { |line| "data: #{line}\n" }.join
+          write_stream_packet("event: token\n#{encoded}\n", token: !safe_text.empty?)
+          write_stream_packet("event: final\ndata: #{JSON.generate(payload)}\n\n")
           terminal = true
         when 'error'
           Rails.logger.warn(event: 'runtime_error_frame')

@@ -113,8 +113,8 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
                         packets.append(buffer)
                         buffer = b''
                 tokens = [p for p in packets if p.startswith(b'event: token')]
-                assert len(tokens) == 2
-                assert packets.index(tokens[0]) < packets.index(tokens[1])
+                assert len(tokens) == 1
+                assert b'Refunds take five days.' in tokens[0]
                 assert packets[-1].startswith(b'event: final')
                 assert b'Refunds take five days.' in packets[-1]
             closed.clear()
@@ -129,8 +129,11 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
                 f'Content-Length: {len(body)}\r\n\r\n').encode() + body
             browser.sendall(request)
             received = b''
-            while b'event: token' not in received:
-                received += browser.recv(4096)
+            while b': ping' not in received:
+                chunk = browser.recv(4096)
+                assert chunk, 'stream ended before a generation heartbeat'
+                received += chunk
+            assert b'event: token' not in received
             browser.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
             browser.close()
             browser = None
@@ -140,7 +143,7 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
                                    for r in records))
             eventually(lambda: (logs.seek(0) is not None and
                        b'rails.infer_call' in logs.read()))
-            print('Anchor: the same answer appears progressively; closing the connection stops remaining generation.')
+            print('Anchor: complete answers are redacted before delivery; disconnect during buffering stops generation.')
     finally:
         if browser is not None:
             browser.close()

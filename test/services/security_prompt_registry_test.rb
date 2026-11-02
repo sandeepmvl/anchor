@@ -51,7 +51,7 @@ class SecurityPromptRegistryTest < (defined?(Rails.application) ? ActiveSupport:
 
   def test_derivation_activation_and_rollback_preserve_versions
     old = %w[chat:v1 chat:v2 chat:v3].to_h { |v| [v, PromptRegistry.resolve(v)] }
-    candidate = PromptRegistry.harden_active(version: 'chat:security-v1')
+    candidate = PromptRegistry.harden_active(version: 'chat:v4')
     published = PromptRegistry.resolve(candidate.version)
     assert_equal old['chat:v2']['template'] + PromptRegistry::HARDENING, published['template']
     %w[model_id temperature max_tokens].each do |field|
@@ -63,7 +63,7 @@ class SecurityPromptRegistryTest < (defined?(Rails.application) ? ActiveSupport:
     ENV['ANCHOR_REPLY_PROMPT_VERSION'] = 'chat:v2'
     assert_equal old['chat:v2'], PromptRegistry.active_reply
     old.each { |version, contract| assert_equal contract, PromptRegistry.resolve(version) }
-    puts 'Published chat:security-v1 from active chat:v2; prior versions unchanged; rollback passed.'
+    puts 'Published chat:v4 from active chat:v2; prior versions unchanged; rollback passed.'
   end
 
   def test_existing_version_cannot_be_rewritten

@@ -33,7 +33,6 @@ except ImportError:
     from schemas import TriageLabels, InvalidModelOutput
     from observability import span, context
 
-
 from anchor_ai.injection_filter import screen_customer, REFUSAL
 from anchor_ai.jailbreak_guard import evaluate as jailbreak_decision
 from anchor_ai.jailbreak_guard import REFUSAL as JAILBREAK_REFUSAL
@@ -47,7 +46,6 @@ def require_safe_customer(value):
     if flags:
         raise HTTPException(status_code=422, detail='injection_detected',
                             headers={'X-Anchor-Injection': 'instruction_override'})
-    # Preserve prompt-contract and context attributes on string subclasses.
     return value if safe == str(value) else safe
 
 
@@ -58,8 +56,6 @@ async def lifespan(application):
     from anchor_ai.mcp import McpClient
     mcp_client = (McpClient(os.environ.get('ANCHOR_MCP_SERVER_ID', 'local_orders'))
                   if os.environ.get('ANCHOR_MCP_ENABLED') == '1' else None)
-    # Supply this factory to the existing bounded runtime's registry dependency.
-    # Its backend must still implement authenticated tenant/order ownership.
     application.state.agent_tool_registry_factory = lambda backend: registry_for(backend, mcp_client=mcp_client)
     factory = getattr(application.state, 'rag_release_runtime_factory', ReleaseRuntime)
     application.state.rag_release_runtime = factory()
@@ -131,7 +127,6 @@ async def telemetry(request: Request, call_next):
 async def validation_failed(request: Request, error: RequestValidationError):
     request.state.telemetry.set(stage='validation')
     request.state.telemetry.fail('validation_failed', 422)
-    # Do not serialize error.errors(): it includes the rejected input.
     return JSONResponse(status_code=422, content={'detail': 'validation_failed'})
 
 
@@ -149,12 +144,10 @@ async def infer(body: InferRequest, request: Request,
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
     if jailbreak_decision(str(body.message), body.history or []).refused:
-        return JSONResponse(content={'reply': JAILBREAK_REFUSAL},
-                            headers={'X-Anchor-Jailbreak': 'refused'})
+        return JSONResponse(content={'reply': JAILBREAK_REFUSAL}, headers={'X-Anchor-Jailbreak': 'refused'})
     safe, flags = screen_customer(str(body.message))
     if flags:
-        return JSONResponse(content={'reply': REFUSAL},
-                            headers={'X-Anchor-Injection': 'instruction_override'})
+        return JSONResponse(content={'reply': REFUSAL}, headers={'X-Anchor-Injection': 'instruction_override'})
     message = require_safe_customer(body.message)
     item.set(stage='provider')
     try:
@@ -320,7 +313,6 @@ app.include_router(router)
 app.add_api_route('/infer', infer, methods=['POST'], response_model=InferResponse,
                   response_model_exclude_none=True)
 app.add_api_route('/retrieve/hybrid', hybrid_retrieve, methods=['POST'], response_model=HybridResponse)
-
 from anchor_ai.schemas import AnalyzedResponse
 
 
@@ -494,8 +486,7 @@ async def multi_agent(body: AgentRequest, request: Request,
         payload['message'] = require_safe_customer(payload['message']) if payload['message'] else payload['message']
     try:
         with span('python.multi_agent', stage='orchestration'):
-            return await run_milestone(getattr(app.state, 'multi_agent_runtime', None),
-                                       x_anchor_context, payload)
+            return await run_milestone(getattr(app.state, 'multi_agent_runtime', None), x_anchor_context, payload)
     except MilestoneUnavailable:
         item.fail('orchestration_not_configured', 503)
         raise HTTPException(status_code=503, detail='orchestration_not_configured') from None
@@ -540,15 +531,13 @@ from anchor_ai.vision import register_vision
 register_vision(app)
 
 
-def extract_ticket_attachment(raw, *, kind, token, secret, expected_scope,
-                              adapter=None, production=False):
+def extract_ticket_attachment(raw, *, kind, token, secret, expected_scope, adapter=None, production=False):
     """Internal entry point; Rails authorizes the ticket before signing identity."""
     from anchor_ai.multimodal_context import verify_attachment_context
     from anchor_ai.attachment_evidence import extract
     identity = verify_attachment_context(token, secret, expected_scope)
     return extract(raw, kind=kind, identity=identity,
-                   expected_tenant=identity.tenant_id,
-                   expected_conversation=identity.conversation_id,
+                   expected_tenant=identity.tenant_id, expected_conversation=identity.conversation_id,
                    adapter=adapter, production=production)
 
 
@@ -567,3 +556,33 @@ async def public_faq_answer(token, query, *, path, runtime=None):
 
 from anchor_ai.batching import register_batch_routes
 register_batch_routes(app)
+
+
+from anchor_ai.pii import RedactionUnavailable, redact_value
+from pydantic import BaseModel, ConfigDict
+
+
+class RedactionRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    value: object
+
+
+@app.exception_handler(RedactionUnavailable)
+async def redaction_unavailable(request: Request, error: RedactionUnavailable):
+    request.state.telemetry.fail('pii_redaction_unavailable', 503)
+    return JSONResponse(status_code=503, content={'detail': 'pii_redaction_unavailable'})
+
+
+@app.post('/v1/pii/redact')
+async def redact_route(body: RedactionRequest, request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    import json
+    if len(json.dumps(body.value, ensure_ascii=True, allow_nan=False)) > 262144:
+        raise RedactionUnavailable()
+    with span('python.pii', stage='redaction'):
+        return {'value': redact_value(body.value)}

@@ -3,10 +3,11 @@ import contextlib
 import json
 import math
 import time
+from types import SimpleNamespace
+from anchor_ai.pii import redact, MAX_TEXT, RedactionUnavailable
 
 import anyio
 from pydantic import BaseModel, ConfigDict, Field
-
 from .observability import context, span
 from .provider import Delta, ProviderError
 
@@ -19,8 +20,7 @@ class AdaptivePacer:
                 or not 1 <= chunk_chars <= max_buffer_chars <= 65536
                 or type(target_interval) not in (int, float)
                 or type(max_flush_delay) not in (int, float)
-                or not math.isfinite(target_interval)
-                or not math.isfinite(max_flush_delay)
+                or not math.isfinite(target_interval) or not math.isfinite(max_flush_delay)
                 or not 0 < target_interval <= max_flush_delay <= 1):
             raise ValueError('invalid_stream_pacing')
         self.target = target_interval
@@ -38,7 +38,6 @@ class AdaptivePacer:
     def deadline(self):
         if not self.buffer:
             return None
-        # An exponentially weighted arrival interval estimates available supply.
         interval = min(self.target, self.supply_interval)
         interval /= 1 + len(self.buffer) / self.chunk_chars
         return min(self.last + interval, self.oldest + self.delay)
@@ -54,7 +53,6 @@ class AdaptivePacer:
     def due(self, now):
         if not self.buffer or now + 1e-12 < self.deadline():
             return []
-        # At the age limit drain the entire buffer. Never trade the bound for smoothness.
         expired = now + 1e-12 >= self.oldest + self.delay
         result = [self._take(now)]
         while expired and self.buffer:
@@ -95,13 +93,12 @@ def pacing_configuration(path='config/performance.yml'):
     from pathlib import Path
     import yaml
     settings = yaml.safe_load(Path(path).read_text())['stream_pacing']
-    if set(settings) != {'enabled', 'target_interval', 'chunk_chars',
-                         'max_buffer_chars', 'max_flush_delay'}:
+    if set(settings) != {'enabled', 'target_interval', 'chunk_chars', 'max_buffer_chars', 'max_flush_delay'}:
         raise ValueError('invalid_stream_pacing')
     if type(settings['enabled']) is not bool:
         raise ValueError('invalid_stream_pacing')
     options = {k: v for k, v in settings.items() if k != 'enabled'}
-    AdaptivePacer(**options)  # Validate even when disabled; never silently ignore bad limits.
+    AdaptivePacer(**options)
     return options if settings['enabled'] else None
 
 
@@ -129,8 +126,28 @@ async def provider_tokens(message):
 TOKEN_SOURCE = provider_tokens
 
 
-async def stream_reply(source, *, ctx=None, interval=0.1, read_timeout=35,
-                       pacing=None):
+async def redacted_deltas(source):
+    text = ''
+    reason = None
+    try:
+        async for delta in source:
+            if reason is not None:
+                raise ProviderError('invalid_provider_response')
+            if delta.text:
+                text += delta.text
+                if len(text) > MAX_TEXT:
+                    raise RedactionUnavailable()
+            if delta.stop:
+                reason = delta.stop
+        if reason not in {'stop', 'length', 'content_filter'}:
+            raise ProviderError('invalid_provider_response')
+        yield SimpleNamespace(text=redact(text), stop=reason)
+    finally:
+        await source.aclose()
+
+
+async def stream_reply(source, *, ctx=None, interval=0.1, read_timeout=35, pacing=None):
+    source = redacted_deltas(source)
     pending = None
     text = ''
     reason = None
@@ -205,8 +222,7 @@ async def stream_reply(source, *, ctx=None, interval=0.1, read_timeout=35,
             code = error.code if isinstance(error, ProviderError) else 'invalid_provider_response'
             telemetry.fail(code)
             message = ('Buffered provider routing does not replay streams.'
-                       if code == 'routing_stream_unsupported'
-                       else 'Reply interrupted; please retry.')
+                       if code == 'routing_stream_unsupported' else 'Reply interrupted; please retry.')
             yield frame('error', json.dumps({'code': code, 'message': message}))
         finally:
             if pacer:
@@ -221,20 +237,13 @@ async def stream_reply(source, *, ctx=None, interval=0.1, read_timeout=35,
 def response_for(body, request):
     from fastapi.responses import StreamingResponse
     return StreamingResponse(
-        stream_reply(TOKEN_SOURCE(body.message), ctx=context(request.headers),
-                     pacing=pacing_configuration()),
+        stream_reply(TOKEN_SOURCE(body.message), ctx=context(request.headers), pacing=pacing_configuration()),
         media_type='text/event-stream',
-        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
-    )
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 async def cancel_tasks(tasks):
-    """Cancel and drain explicitly owned children, not the session owner.
-
-    WebSocket shutdown can run inside an already cancelled AnyIO scope.
-    Shield only cleanup from that scope; do not shield provider execution or
-    suppress direct asyncio cancellation of the caller.
-    """
+    """Cancel and drain explicitly owned children, not the session owner."""
     owner = asyncio.current_task()
     children = []
     seen = set()
@@ -245,8 +254,6 @@ async def cancel_tasks(tasks):
         children.append(task)
     if not children:
         return
-    # FastAPI's cancellation scope must not interrupt sibling finalizers or
-    # cancel the gather future as the session is leaving its WebSocket scope.
     with anyio.CancelScope(shield=True):
         for task in children:
             if not task.done():
