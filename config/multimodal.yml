@@ -1,7 +1,7 @@
 # These settings govern screenshot analysis, not PDF rasterization.
 # PDF extraction uses anchor_ai.ocr.Limits and explicit engine selection.
-# Production PDF ingestion defaults to tesseract and refuses fixture evidence.
-# Managed OCR and live document vision remain unverified and fail closed.
+# Keep this schema unchanged: the existing vision service validates its keys.
+# Ticket attachments use attachment_evidence.MIN_CONFIDENCE and MAX_BYTES.
 provider: offline
 external_calls: false
 model: gpt-4o-mini

@@ -32,6 +32,11 @@ class AgentOrchestrationClient
     raise Unavailable, "orchestration_transport_failed"
   end
 
+  def answer_attachments(evidence, tenant_id:, conversation_id:)
+    MultimodalClient.new.answer(evidence, tenant_id: tenant_id,
+      conversation_id: conversation_id)
+  end
+
   private
 
   def send_request(uri, request)

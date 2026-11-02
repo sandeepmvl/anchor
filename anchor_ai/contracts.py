@@ -254,3 +254,10 @@ class VisionRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     image_base64: str = Field(min_length=1, max_length=2800000)
     ticket_text: str = Field(min_length=1, max_length=1800)
+
+
+class AttachmentScope(BaseModel):
+    """Shape of independently authenticated ticket identity, not credentials."""
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)

@@ -181,3 +181,13 @@ class RecordedCitedClient:
         return {'answer': source['text'], 'decision': 'answer', 'citations': [{
             'chunk_id': 999 if self.fault == 'unknown_chunk' else source['id'],
             'quoted_span': 'Guaranteed refund in one day.' if self.fault == 'span_absent' else source['text']}]}
+
+
+def answer_attachment_envelope(envelope, *, tenant_id, conversation_id):
+    from anchor_ai.attachment_evidence import attachment_answer
+    if (not isinstance(envelope, dict)
+            or set(envelope) != {'label', 'sources'}
+            or envelope['label'] != 'UNTRUSTED_EVIDENCE'):
+        raise ValueError('attachment_envelope_rejected')
+    return attachment_answer(copy.deepcopy(envelope['sources']),
+                             tenant_id=tenant_id, conversation_id=conversation_id)

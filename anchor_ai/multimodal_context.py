@@ -51,3 +51,13 @@ def verify_context(token, secret, *, now=None):
         return VisionIdentity(data['tenant_id'], data['conversation_id'])
     except (ValueError, TypeError, KeyError, UnicodeError):
         raise VisionContextRejected('vision_context_rejected') from None
+
+
+def verify_attachment_context(token, secret, expected_scope, *, now=None):
+    from anchor_ai.contracts import AttachmentScope
+    scope = AttachmentScope.model_validate(expected_scope)
+    identity = verify_context(token, secret, now=now)
+    if (identity.tenant_id != scope.tenant_id
+            or identity.conversation_id != scope.conversation_id):
+        raise VisionContextRejected('attachment_scope_rejected')
+    return identity

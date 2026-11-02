@@ -241,3 +241,12 @@ def replay_delegated_trajectory(fixture, route):
     return dict(endpoint='multi_agent_orchestrator', offline_fixture=True,
                 trace=dict(tenant_id=bounded['tenant_id'], events=bounded['events']),
                 outcome_correct=bounded['outcome_correct'])
+
+
+def run_attachment_answer(rows, *, tenant_id, conversation_id):
+    from anchor_ai.context import pack_attachment_evidence
+    from anchor_ai.answer_policy import answer_attachment_envelope
+    envelope = pack_attachment_evidence(rows, tenant_id=tenant_id,
+                                        conversation_id=conversation_id)
+    return answer_attachment_envelope(envelope, tenant_id=tenant_id,
+                                      conversation_id=conversation_id)

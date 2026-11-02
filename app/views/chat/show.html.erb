@@ -1,4 +1,32 @@
 <%= csrf_meta_tags %>
+<% if @ticket %>
+  <h1><%= @ticket.subject %></h1>
+  <p>Only sanitized evidence is retained. Re-upload is required after extraction failure.</p>
+  <%= form_with url: ticket_attachments_path(ticket_id: @ticket.id), multipart: true do |form| %>
+    <%= form.label :kind, 'Attachment kind' %>
+    <%= form.select :kind, [['Screenshot', 'screenshot'], ['Scanned page', 'scanned_page']] %>
+    <%= form.file_field :file, required: true %>
+    <%= form.submit 'Upload and process' %>
+  <% end %>
+  <p>Reload this ticket after background processing.</p>
+  <% @attachments.each do |item| %>
+    <section aria-label="Attachment <%= item.id %>">
+      <h2>Attachment <%= item.id %>: <%= item.status %></h2>
+      <% if item.offline_fixture %><p>Offline fixture; real vision/OCR quality not verified.</p><% end %>
+      <p role="status"><%= item.notice %></p>
+      <p><%= item.answer['answer'] %></p>
+      <ul>
+        <% item.answer.fetch('citations', []).each do |citation| %>
+          <li>
+            <%= link_to "Attachment #{citation['attachment_id']}, page #{citation['page']}, region #{citation['region']}",
+              ticket_attachment_evidence_path(ticket_id: @ticket.id, id: item.id) %>
+            <q><%= citation['span'] %></q>
+          </li>
+        <% end %>
+      </ul>
+    </section>
+  <% end %>
+<% end %>
 <h1>Anchor chat</h1>
 <form id="chat-form">
   <label>Message <input id="message" value="When will my refund arrive?" required></label>

@@ -96,3 +96,10 @@ class AiTelemetry
     end
   end
 end
+
+ActiveSupport::Notifications.subscribe('anchor.attachment.process') do |*args|
+  payload = args.last
+  fields = %i[adapter confidence gate_fired tool_requested attachment_id
+    tenant_id conversation_id request_id]
+  AiTelemetry.sink.call({ event: 'anchor.attachment.process' }.merge(payload.slice(*fields)))
+end

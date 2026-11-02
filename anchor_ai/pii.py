@@ -122,3 +122,13 @@ def redact_graph(value):
     if value is None or type(value) in (int, float, bool):
         return value
     raise ValueError('unsupported_graph_value')
+
+
+def redact_attachment_span(text):
+    """Bounded sanitized span for attachment evidence persistence."""
+    if not isinstance(text, str) or len(text) > 4000:
+        raise ValueError('attachment_span_rejected')
+    safe = redact_memory(text)
+    if len(safe) > 4000:
+        raise ValueError('attachment_span_rejected')
+    return safe

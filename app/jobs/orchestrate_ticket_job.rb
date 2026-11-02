@@ -14,4 +14,9 @@ class OrchestrateTicketJob < ApplicationJob
       traceparent: traceparent
     )
   end
+
+  # Called only after the upload boundary persists sanitized evidence.
+  def self.enqueue_attachment(organization_id, attachment_id)
+    ProcessTicketAttachmentJob.perform_later(organization_id, attachment_id)
+  end
 end

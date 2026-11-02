@@ -1,6 +1,8 @@
 require 'active_record'
 require 'active_support/core_ext/hash/keys'
 require 'minitest/autorun'
+require 'open3'
+require 'rbconfig'
 
 # Rails owns its connection pool and transaction lifecycle during the full suite.
 if defined?(Rails.application) && Rails.application
@@ -33,8 +35,8 @@ require_relative '../../app/services/prompt_registry'
 class PromptRegistryExportTest < registry_export_test_base
   def setup
     super
-    # Rails rolls this back after each test. Standalone runs reset only this pair.
-    PromptVersion.where(version: %w[chat:v1 chat:v2]).delete_all
+    # Never delete published Rails records to prepare a registry scenario.
+    PromptVersion.where(version: %w[chat:v1 chat:v2]).delete_all unless rails_host?
   end
 
   def teardown
@@ -44,6 +46,7 @@ class PromptRegistryExportTest < registry_export_test_base
   end
 
   def test_public_tags_resolve_to_stable_ids_and_hashes
+    return run_isolated_scenario(__method__) if rails_host?
     first = PromptRegistry.export_regression(tags: %w[chat:v1 chat:v2])
     assert_equal first, PromptRegistry.export_regression(tags: %w[chat:v1 chat:v2])
     first.each do |export|
@@ -56,6 +59,7 @@ class PromptRegistryExportTest < registry_export_test_base
   end
 
   def test_unknown_or_private_tags_are_denied
+    return run_isolated_scenario(__method__) if rails_host?
     count_before = PromptVersion.count
     assert_raises(SecurityError) do
       PromptRegistry.export_regression(tags: ['tenant-private:v1', 'chat:v2'])
@@ -65,10 +69,23 @@ class PromptRegistryExportTest < registry_export_test_base
   end
 
   def test_private_content_under_a_public_name_is_not_exported
+    return run_isolated_scenario(__method__) if rails_host?
     PromptVersion.create!(PromptRegistry::V1.merge(version: 'chat:v1',
       template: 'Private tenant instructions. Ticket: {{ticket}}'))
     assert_raises(SecurityError) do
       PromptRegistry.export_regression(tags: %w[chat:v1 chat:v2])
     end
+  end
+
+  private
+
+  def rails_host?
+    defined?(Rails.application) && Rails.application
+  end
+
+  def run_isolated_scenario(name)
+    output, status = Open3.capture2e(RbConfig.ruby, File.expand_path(__FILE__),
+      '--name', name.to_s)
+    assert status.success?, output
   end
 end

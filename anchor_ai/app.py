@@ -439,10 +439,8 @@ async def chain_reply(
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')
     if not expected:
-        item.fail('service_not_configured', 503)
         raise HTTPException(status_code=503, detail='service_not_configured')
     if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
-        item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
     if os.environ.get('ANCHOR_REPLY_PIPELINE') != 'lcel':
         raise HTTPException(status_code=404, detail='pipeline_not_enabled')
@@ -527,3 +525,15 @@ async def cited_rag(
 
 from anchor_ai.vision import register_vision
 register_vision(app)
+
+
+def extract_ticket_attachment(raw, *, kind, token, secret, expected_scope,
+                              adapter=None, production=False):
+    """Internal entry point; Rails authorizes the ticket before signing identity."""
+    from anchor_ai.multimodal_context import verify_attachment_context
+    from anchor_ai.attachment_evidence import extract
+    identity = verify_attachment_context(token, secret, expected_scope)
+    return extract(raw, kind=kind, identity=identity,
+                   expected_tenant=identity.tenant_id,
+                   expected_conversation=identity.conversation_id,
+                   adapter=adapter, production=production)

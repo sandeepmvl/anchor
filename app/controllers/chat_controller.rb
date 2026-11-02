@@ -8,6 +8,14 @@ class ChatController < ApplicationController
   class ProtocolError < StandardError; end
 
   def show
+    return unless params[:ticket_id].present?
+    policy = TicketAccessPolicy.new(session)
+    @ticket = policy.ticket(params[:ticket_id])
+    @attachments = @ticket.ticket_attachments.where(organization_id: @ticket.organization_id).order(:id)
+  rescue TicketAccessPolicy::Unauthenticated
+    head :unauthorized
+  rescue ActiveRecord::RecordNotFound
+    head :not_found
   end
 
   def stream_request?
