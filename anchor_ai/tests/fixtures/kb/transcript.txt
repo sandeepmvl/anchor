@@ -2,3 +2,5 @@ Customer: Can I get a refund within 30 days? I opened the item.
 Agent: Opened items are excluded. Please keep the receipt for review.
 Customer: Where does an approved refund go?
 Agent: It returns to the original payment method.
+Customer: Where is order 4821?
+Agent: Synthetic order 4821 has a shipping delay; review its tracking before discussing a refund.

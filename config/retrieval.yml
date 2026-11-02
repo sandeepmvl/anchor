@@ -67,3 +67,9 @@ chat:
   fixture_conversation_id: 10
   fixture_env: ANCHOR_DENSE_FIXTURE
   url: http://127.0.0.1:8000/v1/dense_rag
+
+sparse:
+  k1: 1.5
+  b: 0.75
+  top_k: 5
+  tokenizer_version: codes-v1

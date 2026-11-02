@@ -97,3 +97,11 @@ class DenseRagResponse(BaseModel):
     reply: str = Field(min_length=1, max_length=4000)
     citations: list[int]
     abstained: bool
+
+
+class SparseHit(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    id: int = Field(gt=0)
+    tenant_id: int = Field(gt=0)
+    text: str
+    score: float = Field(allow_inf_nan=False)

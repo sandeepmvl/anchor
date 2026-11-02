@@ -268,3 +268,26 @@ def activate(db, tenant, identity, rollback=False):
         db.execute('UPDATE retrieval_generations SET active=0 WHERE tenant_id=?', (tenant,))
         db.execute("UPDATE retrieval_generations SET active=1,status='ready' WHERE tenant_id=? AND id=?", (tenant, identity))
         bump(db, tenant)
+
+
+def retrieval_snapshot(db, tenant):
+    """Read generation identity and eligible chunks from one SQLite snapshot."""
+    valid_tenant(tenant)
+    owns_transaction = not db.in_transaction
+    if owns_transaction:
+        db.execute('BEGIN')
+    try:
+        gen = active(db, tenant)
+        if gen is None or gen['status'] != 'ready':
+            return None, []
+        rows = db.execute('''SELECT c.* FROM document_chunks c
+            JOIN documents d ON d.id=c.document_id AND d.tenant_id=c.tenant_id
+            WHERE c.tenant_id=? AND c.retrieval_generation_id=? AND c.is_leaf=1
+              AND d.status='ready' AND c.source_hash=d.content_hash
+              AND c.chunker_version=d.chunker_version
+            ORDER BY c.id''', (tenant, gen['id'])).fetchall()
+        return gen, [dict(row) for row in rows]
+    finally:
+        if owns_transaction:
+            # End only our read transaction, never a caller's transaction.
+            db.rollback()
