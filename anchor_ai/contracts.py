@@ -61,3 +61,6 @@ class TriageLabels(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     category: Literal['billing', 'technical', 'account', 'order']
     urgency: Literal['P1', 'P2', 'P3']
+
+
+# schemas.py inherits TriageLabels for strict requests and local output validation.

@@ -10,13 +10,24 @@ from typing import Protocol
 import httpx
 
 try:
-    from .prompts import render
+    from .prompts import render, render_structured
+    from .schemas import TRIAGE_FORMAT
 except ImportError:
-    from prompts import render
+    from prompts import render, render_structured
+    from schemas import TRIAGE_FORMAT
 FIXTURES = Path(__file__).parent / 'tests/fixtures/provider_responses.json'
 TRIAGE_TICKETS = FIXTURES.with_name('triage_tickets.json')
 TRIAGE_RESPONSES = FIXTURES.with_name('triage_responses.json')
 REASONING_RESPONSES = FIXTURES.with_name('reasoning_responses.json')
+STRUCTURED_RESPONSES = FIXTURES.with_name('structured_responses.json')
+
+
+def structured_record(ticket):
+    try:
+        return next(item for item in json.loads(STRUCTURED_RESPONSES.read_text())
+                    if item['ticket'] == ticket)
+    except (StopIteration, ValueError, KeyError, TypeError):
+        raise ProviderError('replay_miss') from None
 
 
 class ProviderError(Exception):
@@ -43,8 +54,25 @@ class ReplayProvider:
                  effort=None, max_tokens=4000):
         self.expected_messages = None
         self.expected_reasoning = None
+        self.expected_format = None
         self.fixture_latency_ms = None
-        if task == 'reasoning':
+        if task == 'structured':
+            try:
+                record = next(item for item in json.loads(STRUCTURED_RESPONSES.read_text())
+                              if item['id'] == fixture_id)
+                system, ticket = render_structured(record['ticket'])
+                self.expected_messages = [{'role': 'system', 'content': system},
+                                          {'role': 'user', 'content': ticket}]
+                self.expected_format = TRIAGE_FORMAT
+                self.sequence = [{'status': 200, 'body': {
+                    'model': 'gpt-4o-mini',
+                    'choices': [{'message': {'content': record['raw']},
+                                 'finish_reason': record['finish_reason']}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 20,
+                              'total_tokens': 120}}}]
+            except (KeyError, StopIteration, ValueError, TypeError):
+                raise ProviderError('replay_miss') from None
+        elif task == 'reasoning':
             try:
                 data = json.loads(REASONING_RESPONSES.read_text())
                 ticket = next(t for t in data['tickets'] if t['id'] == fixture_id)
@@ -96,6 +124,8 @@ class ReplayProvider:
             try:
                 payload = json.loads(request.content)
                 matches = payload['messages'] == self.expected_messages
+                if self.expected_format is not None:
+                    matches = matches and payload.get('response_format') == self.expected_format
                 if self.expected_reasoning is not None:
                     matches = matches and all(payload.get(k) == v for k, v in self.expected_reasoning.items())
                     matches = matches and 'max_tokens' not in payload

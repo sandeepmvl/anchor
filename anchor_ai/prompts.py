@@ -33,3 +33,7 @@ def render(variant, ticket):
     addition = {'zero_shot': '', 'few_shot': FEW_SHOT_EXAMPLES,
                 'cot': COT_INSTRUCTION}[variant]
     return '\n\n'.join(part for part in (POLICY, addition, 'Ticket:\n' + ticket) if part)
+
+
+def render_structured(ticket):
+    return POLICY, ticket

@@ -1,0 +1,7 @@
+[
+  {"id":"checkout","ticket":"Checkout is down for every customer; help!","raw":"{\"category\":\"technical\",\"urgency\":\"P1\"}","finish_reason":"stop","expected":{"category":"technical","urgency":"P1"}},
+  {"id":"invoice","ticket":"Please correct the company name on my invoice.","raw":"{\"category\":\"billing\",\"urgency\":\"P3\"}","finish_reason":"stop","expected":{"category":"billing","urgency":"P3"}},
+  {"id":"login","ticket":"I cannot log in to my account.","raw":"{\"category\":\"account\",\"urgency\":\"P2\"}","finish_reason":"stop","expected":{"category":"account","urgency":"P2"}},
+  {"id":"shipping","ticket":"Where is my shipment?","raw":"{\"category\":\"order\",\"urgency\":\"P3\"}","finish_reason":"stop","expected":{"category":"order","urgency":"P3"}},
+  {"id":"partial","ticket":"My card was charged twice.","raw":"{\"category\":\"billing\",\"urgency\":","finish_reason":"length","expected":null}
+]

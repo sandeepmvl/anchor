@@ -7,18 +7,20 @@ import httpx
 
 try:
     from .contracts import InferResponse, Usage, TriageLabels
-    from .prompts import render
+    from .prompts import render, render_structured
     from .provider import (ProviderError, ReplayProvider, LiveProvider,
-                           configured_provider, classify, safe_retry_after)
+                           configured_provider, classify, safe_retry_after, structured_record)
     from .observability import span, tokens_from_usage, estimate, PRICE_VERSION
     from .reasoning import request_fields
+    from .schemas import TRIAGE_FORMAT, InvalidModelOutput, validate_triage
 except ImportError:
     from contracts import InferResponse, Usage, TriageLabels
-    from prompts import render
+    from prompts import render, render_structured
     from provider import (ProviderError, ReplayProvider, LiveProvider,
-                          configured_provider, classify, safe_retry_after)
+                          configured_provider, classify, safe_retry_after, structured_record)
     from observability import span, tokens_from_usage, estimate, PRICE_VERSION
     from reasoning import request_fields
+    from schemas import TRIAGE_FORMAT, InvalidModelOutput, validate_triage
 
 MAX_ATTEMPTS = 3
 TOTAL_DEADLINE = 4.0
@@ -57,7 +59,21 @@ class LlmClient:
         finally:
             self.provider = original
 
-    async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None):
+    async def complete_structured(self, ticket):
+        provider = self.provider
+        if isinstance(provider, ReplayProvider):
+            record = structured_record(ticket)
+            provider = ReplayProvider(task='structured', fixture_id=record['id'])
+        client = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
+        system, prompt = render_structured(ticket)
+        result = await client.complete_result(prompt, system, response_format=TRIAGE_FORMAT)
+        triage = validate_triage(result.reply)
+        if result.finish_reason != 'stop':
+            raise InvalidModelOutput('incomplete_output')
+        return triage
+
+    async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None,
+                              response_format=None):
         self.attempts = 0
         self.last_error = ProviderError('provider_timeout', retryable=True)
         with span('llm.call', stage='provider',
@@ -70,6 +86,9 @@ class LlmClient:
                 model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
                 fields = request_fields(model, effort, max_tokens,
                                         offline=isinstance(self.provider, ReplayProvider))
+                if response_format is not None:
+                    fields = dict(fields or {})
+                    fields['response_format'] = response_format
                 if effort is not None:
                     telemetry.set(reasoning_setting=effort,
                                   reasoning_effort=fields['reasoning_effort'],
@@ -101,7 +120,8 @@ class LlmClient:
         payload = {'model': os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
                    'messages': messages, 'max_tokens': max_tokens}
         if reasoning_fields:
-            payload.pop('max_tokens')
+            if 'max_completion_tokens' in reasoning_fields:
+                payload.pop('max_tokens')
             payload.update(reasoning_fields)
         end = self.clock() + TOTAL_DEADLINE
         async with self.provider.client() as client:
@@ -123,6 +143,12 @@ class LlmClient:
                         try:
                             body = response.json()
                             choice = body['choices'][0]
+                            if 'response_format' in payload:
+                                message = choice['message']
+                                if message.get('refusal'):
+                                    raise InvalidModelOutput('provider_refusal')
+                                if not isinstance(message.get('content'), str):
+                                    raise InvalidModelOutput('incomplete_output')
                             usage = Usage.model_validate(body['usage'])
                             if usage.total_tokens != usage.prompt_tokens + usage.completion_tokens:
                                 raise ValueError('inconsistent usage')

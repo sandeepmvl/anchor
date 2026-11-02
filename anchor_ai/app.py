@@ -10,11 +10,13 @@ try:
     from .contracts import InferRequest, InferResponse
     from .llm_client import LlmClient
     from .provider import ProviderError
+    from .schemas import TriageLabels, InvalidModelOutput
     from .observability import span, context
 except ImportError:
     from contracts import InferRequest, InferResponse
     from llm_client import LlmClient
     from provider import ProviderError
+    from schemas import TriageLabels, InvalidModelOutput
     from observability import span, context
 
 app = FastAPI()
@@ -60,6 +62,33 @@ async def infer(
     item.set(stage='provider')
     try:
         return await LlmClient().complete_result(body.message)
+    except ProviderError as error:
+        item.fail(error.code, error.status)
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
+
+
+@router.post('/structured_replies', response_model=TriageLabels)
+async def structured_reply(
+    body: InferRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode('utf-8'), expected.encode('utf-8')):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    item.set(stage='provider')
+    try:
+        return await LlmClient().complete_structured(body.message)
+    except InvalidModelOutput as error:
+        item.set(stage='validation')
+        item.fail('invalid_model_output', 422)
+        return JSONResponse(status_code=422, content={'detail': error.detail()})
     except ProviderError as error:
         item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None

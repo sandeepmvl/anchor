@@ -7,11 +7,12 @@ class LlmClient
   CANNED_REPLY = "Anchor stub: thanks for your message, a support reply is on its way."
 
   class BoundaryError < StandardError
-    attr_reader :code, :status, :retryable, :retry_after
+    attr_reader :code, :status, :retryable, :retry_after, :details
 
-    def initialize(code, status, retryable: false, retry_after: nil)
+    def initialize(code, status, retryable: false, retry_after: nil, details: {})
       @code, @status = code, status
       @retryable, @retry_after = retryable, retry_after
+      @details = details
       super(code)
     end
   end
@@ -33,6 +34,12 @@ class LlmClient
     end
   end
 
+  def structured_reply(message)
+    AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
+      perform_http_complete(message, span, structured: true)
+    end
+  end
+
   private
 
   def api_key
@@ -50,7 +57,7 @@ class LlmClient
     end
   end
 
-  def perform_http_complete(message, span)
+  def perform_http_complete(message, span, structured: false)
     config = YAML.safe_load(ERB.new(Rails.root.join("config/llm.yml").read).result).fetch("shared")
     uri = URI(config.fetch("url"))
     secret = ENV.fetch("ANCHOR_AI_SECRET")
@@ -58,6 +65,7 @@ class LlmClient
     unless %w[http https].include?(uri.scheme) && uri.host
       raise ArgumentError, "invalid service URL"
     end
+    uri = URI.join(uri.to_s, "structured_replies") if structured
 
     http = Net::HTTP.new(uri.host, uri.port)
     http.use_ssl = uri.scheme == "https"
@@ -74,11 +82,19 @@ class LlmClient
     response = http.request(request)
     status = response.code.to_i
     span.set(status_code: status)
+    structured_failure(response) if structured && status == 422
     provider_failure(response, status) unless (200..299).cover?(status)
     fail_boundary("ai_auth_rejected", 502) if status == 401
     fail_boundary("ai_contract_rejected", 502) if status == 422
     fail_boundary("ai_upstream_error", 502) unless (200..299).cover?(status)
     data = JSON.parse(response.body)
+    if structured
+      valid = data.is_a?(Hash) && data.keys.sort == %w[category urgency] &&
+        %w[billing technical account order].include?(data["category"]) &&
+        %w[P1 P2 P3].include?(data["urgency"])
+      fail_boundary("ai_invalid_response", 502) unless valid
+      return data
+    end
     valid = data.is_a?(Hash) && data["reply"].is_a?(String) &&
       data["tokens"].is_a?(Integer) && data["tokens"] >= 0
     fail_boundary("ai_invalid_response", 502) unless valid
@@ -93,6 +109,25 @@ class LlmClient
     fail_boundary("ai_invalid_response", 502)
   rescue KeyError, ArgumentError
     fail_boundary("ai_configuration_error", 503)
+  end
+
+  def structured_failure(response)
+    data = JSON.parse(response.body)
+    detail = data.is_a?(Hash) ? data["detail"] : nil
+    return unless detail.is_a?(Hash) && detail["code"] == "invalid_model_output"
+    reason = detail["reason"]
+    return unless %w[invalid_json schema_violation incomplete_output provider_refusal].include?(reason)
+    details = { reason: reason }
+    if reason == "schema_violation"
+      errors = detail["errors"]
+      return unless errors.is_a?(Array) && errors.length <= 10
+      allowed_types = %w[missing literal_error extra_forbidden model_type string_type]
+      return unless errors.all? { |e| e.is_a?(Hash) &&
+        e["loc"].is_a?(Array) && e["loc"].length == 1 &&
+        %w[category urgency $].include?(e["loc"][0]) && allowed_types.include?(e["type"]) }
+      details[:errors] = errors.map { |e| { loc: e["loc"], type: e["type"] } }
+    end
+    raise BoundaryError.new("invalid_model_output", 422, details: details)
   end
 
   def provider_failure(response, status)
@@ -131,6 +166,7 @@ ActiveSupport.on_load(:action_controller_base) do
   rescue_from LlmClient::BoundaryError do |error|
     response.set_header("Retry-After", error.retry_after.to_s) unless error.retry_after.nil?
     body = { error: error.code }
+    body.merge!(error.details) if error.code == "invalid_model_output"
     if error.code.start_with?("provider_")
       body.merge!(retryable: error.retryable, retry_after: error.retry_after)
     end
