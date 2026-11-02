@@ -1,6 +1,7 @@
 import json
+import math
 
-from pydantic import ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 try:
     from .contracts import TriageLabels as ExistingTriageLabels
@@ -49,3 +50,36 @@ def validate_triage(raw):
             for e in error.errors()
         ]
         raise InvalidModelOutput('schema_violation', safe) from None
+
+
+class ChunkEmbedRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    tenant_id: int = Field(gt=0)
+    text: str = Field(min_length=1, max_length=1000000)
+
+
+class IngestionNode(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    chunk_index: int = Field(ge=0)
+    parent_index: int | None
+    is_leaf: bool
+    text: str
+    window_text: str | None = None
+    embedding: list[float] | None = None
+    embedding_model: str | None = None
+    embedding_revision: str | None = None
+    embedding_dimensions: int | None = None
+
+    @model_validator(mode='after')
+    def payload(self):
+        metadata = (self.embedding_model, self.embedding_revision, self.embedding_dimensions)
+        if self.is_leaf:
+            if self.parent_index is None or not self.window_text or not all(metadata):
+                raise ValueError('invalid_leaf')
+            if self.embedding is None or len(self.embedding) != self.embedding_dimensions:
+                raise ValueError('invalid_embedding_dimension')
+            if not all(math.isfinite(value) for value in self.embedding):
+                raise ValueError('invalid_embedding_number')
+        elif self.parent_index is not None or self.embedding is not None or any(metadata):
+            raise ValueError('invalid_parent')
+        return self

@@ -7,5 +7,15 @@
     {"text": "Can I get my money back?", "vector": [1.0, 0.0, 0.0, 0.0]},
     {"text": "How do I request a refund?", "vector": [0.99, 0.05, 0.0, 0.0]},
     {"text": "How do I reset my password?", "vector": [0.0, 1.0, 0.0, 0.0]}
-  ]
+  ],
+  "ingestion": {
+    "model": "anchor-ingestion-offline-v1",
+    "revision": "authored-ingestion-v1",
+    "dimensions": 4,
+    "records": [
+      {"text": "Refunds require review.", "vector": [1.0, 0.0, 0.0, 0.0]},
+      {"text": "Contact [EMAIL] for help.", "vector": [0.0, 1.0, 0.0, 0.0]},
+      {"text": "Call [PHONE] for updates.", "vector": [0.0, 0.0, 1.0, 0.0]}
+    ]
+  }
 }

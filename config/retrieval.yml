@@ -26,3 +26,12 @@ chunking:
     hierarchical: {parent_size: 400, child_size: 80, child_overlap: 10}
     structural: {max_chars: 4000}
   context_prefix: false
+
+ingestion:
+  sentences_per_parent: 3
+  sentence_window: 1
+  pii_patterns:
+    - pattern: '[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}'
+      replacement: '[EMAIL]'
+    - pattern: '\b[0-9]{3}-[0-9]{3}-[0-9]{4}\b'
+      replacement: '[PHONE]'

@@ -1,0 +1,34 @@
+#!/usr/bin/env ruby
+require_relative '../config/environment'
+
+abort 'Use --enqueue or --drain' unless %w[--enqueue --drain].include?(ARGV.first)
+ActiveJob::Base.queue_adapter = :test
+ActiveJob::Base.logger = Logger.new(File::NULL)
+policy = 'Refunds require review. Contact pat@example.com for help. Call 415-555-0199 for updates.'
+client = DocumentIngestionClient.new
+references = [101, 202].map do |tenant|
+  reference = client.stage(tenant_id: tenant, text: policy)
+  IngestDocumentJob.perform_later(tenant, reference)
+  [tenant, reference]
+end
+adapter = ActiveJob::Base.queue_adapter
+jobs = adapter.enqueued_jobs
+raise 'queue_count' unless jobs.length == 2
+puts "queued=#{jobs.length}; arguments contain tenant and staged-upload reference only"
+if ARGV.first == '--drain'
+  jobs.dup.each do |job|
+    serialized = job.select { |key, _value| key.is_a?(String) }
+    ActiveJob::Base.execute(serialized)
+  end
+  jobs.clear
+  before = [Document.count, DocumentChunk.count]
+  references.each { |tenant, reference| IngestDocumentJob.perform_now(tenant, reference) }
+  raise 'retry_duplicated_rows' unless before == [Document.count, DocumentChunk.count]
+  puts 'retry unchanged: documents and chunks'
+  [101, 202].each do |tenant|
+    document = Document.find_by!(tenant_id: tenant, status: 'ready')
+    count = document.document_chunks.count
+    raise 'missing_chunks' unless count.positive?
+    puts "Anchor policy tenant=#{tenant} ingestion=completed status=#{document.status} persistent_chunks=#{count}"
+  end
+end

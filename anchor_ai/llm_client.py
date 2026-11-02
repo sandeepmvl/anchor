@@ -373,3 +373,33 @@ class LlmClient:
         # Attach numeric metrics to this request, never to a shared provider.
         prepared.context_metrics = assembly.metrics
         return prepared, assembly, provider
+
+    def embed_ingestion(self, texts):
+        import hashlib
+        from pathlib import Path
+        import yaml
+        from .pii import prepare
+        texts = [prepare(text) for text in texts]
+        root = Path(__file__).resolve().parents[1]
+        provider = os.environ.get('ANCHOR_INGESTION_EMBEDDINGS', 'offline')
+        if provider == 'offline':
+            fixture = json.loads((root / 'anchor_ai/tests/fixtures/embedding_responses.json').read_text())['ingestion']
+            known = {row['text']: row['vector'] for row in fixture['records']}
+            dimensions = fixture['dimensions']
+            vectors = []
+            for text in texts:
+                digest = hashlib.sha256(text.encode()).digest()
+                vectors.append(known.get(text, [(digest[i] - 127.5) / 127.5 for i in range(dimensions)]))
+            return dict(vectors=vectors, model=fixture['model'], revision=fixture['revision'], dimensions=dimensions)
+        config = yaml.safe_load((root / 'config/retrieval.yml').read_text())['embeddings']['providers']
+        if provider not in config:
+            raise ValueError('invalid_ingestion_provider')
+        result = self.embed(texts, input_type='document', provider=provider)
+        if hasattr(result, 'model_dump'):
+            result = result.model_dump()
+        if isinstance(result, dict):
+            vectors = result.get('vectors', result.get('embeddings'))
+        else:
+            vectors = getattr(result, 'vectors', getattr(result, 'embeddings', result))
+        settings = config[provider]
+        return dict(vectors=vectors, model=settings['model'], revision=settings['revision'], dimensions=settings['dimensions'])
