@@ -295,6 +295,32 @@ def retrieval_snapshot(db, tenant):
             db.rollback()
 
 
+def verify_recovery_index(db, artifact):
+    """Check an isolated index against the database before any activation."""
+    expected = [dict(r) for r in db.execute(
+        'SELECT tenant_id,id,model,revision,dimensions,vector_column FROM retrieval_generations WHERE active=1 ORDER BY tenant_id')]
+    if artifact != {'format': 1, 'generations': expected}:
+        raise ValueError('incompatible_index_artifact')
+    for gen in expected:
+        valid_tenant(gen['tenant_id'])
+        full = generation(db, gen['tenant_id'], gen['id'])
+        if full['status'] != 'ready':
+            raise ValueError('index_not_ready')
+        rows = db.execute('''SELECT c.*,d.tenant_id AS owner,d.content_hash AS original_hash
+            FROM document_chunks c LEFT JOIN documents d ON d.id=c.document_id
+            WHERE c.retrieval_generation_id=?''', (gen['id'],)).fetchall()
+        for row in rows:
+            if row['tenant_id'] != gen['tenant_id'] or row['owner'] != gen['tenant_id']:
+                raise ValueError('recovery_tenant_mismatch')
+            if row['source_hash'] != row['original_hash']:
+                raise ValueError('recovery_source_mismatch')
+            if row['is_leaf']:
+                if (row['embedding_model'], row['embedding_revision'], row['embedding_dimensions']) != (gen['model'], gen['revision'], gen['dimensions']):
+                    raise ValueError('recovery_embedding_mismatch')
+                validate_vector(json.loads(row[gen['vector_column']]), gen)
+    return expected
+
+
 def scoped_generation_key(gen):
     """Resolve from active() or retrieval_snapshot() on each request."""
     if not gen or gen['status'] != 'ready':

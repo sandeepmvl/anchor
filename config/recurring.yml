@@ -6,6 +6,9 @@ production:
   recover_ai_tasks:
     command: "AiTaskDispatcher.sweep"
     schedule: every minute
+  snapshot_anchor_state:
+    command: "Kernel.system('sh', 'ops/backups/backup_snapshot.sh', exception: true)"
+    schedule: every hour
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour

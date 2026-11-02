@@ -50,6 +50,30 @@ from pathlib import Path
 from .pii import prepare
 
 
+def recovery_inventory(db):
+    """Canonical per-record evidence for every application table, including ledgers."""
+    import hashlib
+    import base64
+
+    def encode(value):
+        return {'base64': base64.b64encode(value).decode()} if isinstance(value, bytes) else value
+
+    result = {}
+    names = [r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    for name in names:
+        quoted = '"' + name.replace('"', '""') + '"'
+        columns = [r[1] for r in db.execute('PRAGMA table_info(' + quoted + ')')]
+        records = []
+        for row in db.execute('SELECT * FROM ' + quoted):
+            raw = json.dumps([encode(v) for v in row], ensure_ascii=False,
+                             separators=(',', ':'), allow_nan=False)
+            records.append(hashlib.sha256(raw.encode()).hexdigest())
+        result[name] = {'columns': columns, 'count': len(records),
+                        'record_checksums': sorted(records)}
+    return result
+
+
 def connect(path):
     db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=rw', uri=True, timeout=2)
     db.row_factory = sqlite3.Row

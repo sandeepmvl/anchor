@@ -1,0 +1,14 @@
+version: 1
+frequency_seconds: 3600
+retention:
+  hourly: 24
+  daily: 7
+rpo_target_seconds: 3600
+rto_target_seconds: 900
+inventory:
+  - entire SQLite database, including knowledge and conversation/tool-action history
+  - agent memory and native action claims in that database
+  - active retrieval generations and release pointers
+  - immutable index, prompt/config, and eval golden-dataset artifacts
+boundary: offline-exclusive-writers
+production: blocked_until_coordinated_adapter_exists

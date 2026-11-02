@@ -62,6 +62,24 @@ def pin(snapshot, *, tenant_id, required_contract, offline=False):
                         bundle['contract'], bundle['ticket'], bundle['reply'])
 
 
+def verify_recovered_releases(snapshots, generations, *, offline=False):
+    """Validate restored release pointers and their exact tenant/index pairing."""
+    expected = {g['tenant_id']: str(g['id']) for g in generations}
+    seen = set()
+    for snapshot in snapshots:
+        tenant = snapshot['tenant_id']
+        if tenant in seen or tenant not in expected:
+            raise ValueError('recovery_release_tenant_mismatch')
+        admitted = pin(snapshot, tenant_id=tenant,
+                       required_contract='anchor-support-v1', offline=offline)
+        if admitted.index != expected[tenant]:
+            raise ValueError('recovery_release_index_mismatch')
+        seen.add(tenant)
+    if seen != set(expected):
+        raise ValueError('missing_recovered_release')
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description='Offline release-bundle boundary')
     parser.add_argument('--gate', required=True)
