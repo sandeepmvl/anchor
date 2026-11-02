@@ -13,7 +13,7 @@ class AgentOrchestrationClient
     @transport = transport || method(:send_request)
   end
 
-  def execute(body, execution_context:, request_id:, traceparent:)
+  def execute(body, execution_context:, request_id:, traceparent:, idempotency_key: nil)
     raise Unavailable, "service_not_configured" if @secret.to_s.empty?
     raise ArgumentError, "missing_execution_context" if execution_context.to_s.empty?
     request = Net::HTTP::Post.new(@url)
@@ -22,6 +22,7 @@ class AgentOrchestrationClient
     request["X-Anchor-Context"] = execution_context
     request["X-Request-Id"] = request_id
     request["traceparent"] = traceparent
+    request["Idempotency-Key"] = idempotency_key if idempotency_key
     request.body = JSON.generate(body)
     response = @transport.call(@url, request)
     raise Unavailable, "orchestration_unavailable" unless response.code.to_i.between?(200, 299)

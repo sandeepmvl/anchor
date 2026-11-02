@@ -1,4 +1,9 @@
-"""Bounded bulk boundary. Streaming does not enter this module."""
+"""Bounded bulk boundary. Streaming does not enter this module.
+
+Provider submission is not durable-task completion. An AiTask adapter must
+retrieve and commit required results before advancing its progress checkpoint.
+Retry-safe provider submission requires downstream idempotency enforcement.
+"""
 import asyncio
 import hashlib
 import hmac
@@ -306,6 +311,8 @@ class BatchRuntime:
         return {'items': await asyncio.gather(*(one(p) for p in envelope.items))}
 
     async def _jobs(self, items):
+        # A persisted provider identifier is a submission receipt, not a result.
+        # Callers must not advance AiTask completion on this return value.
         submit = getattr(self.scheduler.adapter, 'submit_job', None)
         if submit is None:
             raise ValueError('async_batch_capability_unavailable')

@@ -50,6 +50,12 @@ def environment_token():
 
 
 def action_key(tenant_id, conversation_id, order_id, amount_cents):
+    """Identify the logical action, never its worker attempt.
+
+    Durable task retries must reuse this key and retain approval checks.
+    The tool provider must enforce the key across the remote commit window;
+    a local completion checkpoint alone cannot guarantee that enforcement.
+    """
     material = [tenant_id, conversation_id, 'issue_refund', order_id, amount_cents]
     return hashlib.sha256(json.dumps(material).encode()).hexdigest()
 
@@ -115,6 +121,7 @@ class CheckpointStore:
         return dict(approval)
 
     def complete(self, thread, token, key):
+        # Approval consumption is local state, not a remote-effect ledger.
         approval = self.approval(thread, token, key)
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')

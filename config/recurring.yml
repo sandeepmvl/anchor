@@ -1,0 +1,11 @@
+development:
+  recover_ai_tasks:
+    command: "AiTaskDispatcher.sweep"
+    schedule: every minute
+production:
+  recover_ai_tasks:
+    command: "AiTaskDispatcher.sweep"
+    schedule: every minute
+  clear_solid_queue_finished_jobs:
+    command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
+    schedule: every hour

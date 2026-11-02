@@ -20,4 +20,6 @@ Rails.application.routes.draw do
   get '/api/tickets/:ticket_id/attachments/:id', to: 'api/ticket_attachments#show', as: :ticket_attachment_evidence
   post '/api/tickets/:ticket_id/attachments', to: 'api/ticket_attachments#create', as: :ticket_attachments
   post '/api/realtime_sessions', to: 'api/realtime_sessions#create'
+  post '/api/organizations/:organization_id/ai_tasks', to: 'api/ai_tasks#create'
+  get '/api/organizations/:organization_id/ai_tasks/:id', to: 'api/ai_tasks#show'
 end
