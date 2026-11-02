@@ -5,12 +5,37 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ReasoningEffort = Literal['off', 'low', 'high']
 
 
+class PromptContract(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    version: str = Field(pattern=r'^chat:v[1-9][0-9]*$')
+    template: str = Field(min_length=1)
+    model_id: str = Field(pattern=r'^[A-Za-z0-9.-]+-\d{4}-\d{2}-\d{2}$')
+    temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
+    max_tokens: int = Field(gt=0)
+
+    @field_validator('template')
+    @classmethod
+    def one_placeholder(cls, value):
+        if value.count('{{ticket}}') != 1:
+            raise ValueError('one ticket placeholder required')
+        return value
+
+
+class ChatMessage(str):
+    """Internal string-compatible input; never stores contract in global state."""
+    def __new__(cls, text, contract):
+        value = super().__new__(cls, text)
+        value.prompt_contract = contract
+        return value
+
+
 class InferRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     version: Literal['v1']
     conversation_id: int = Field(gt=0)
     message: str = Field(min_length=1, max_length=4000)
     tenant_id: int = Field(gt=0)
+    prompt_contract: PromptContract | None = None
 
     @field_validator('message')
     @classmethod
@@ -18,6 +43,12 @@ class InferRequest(BaseModel):
         if not value.strip():
             raise ValueError('message must not be blank')
         return value
+
+    @model_validator(mode='after')
+    def attach_chat_contract(self):
+        if self.prompt_contract is not None:
+            self.message = ChatMessage(self.message, self.prompt_contract)
+        return self
 
 
 class PromptDetails(BaseModel):

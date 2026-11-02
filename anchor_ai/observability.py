@@ -29,7 +29,8 @@ FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model
           'currency', 'cost_basis', 'price_version', 'attempts',
           'reasoning_setting', 'reasoning_effort', 'max_completion_tokens',
           'finish_reason', 'completion_status', 'fixture_latency_ms',
-          'fixture_latency_basis', 'ticket_id', 'ticket_class'}
+          'fixture_latency_basis', 'ticket_id', 'ticket_class',
+          'prompt_version', 'prompt_fingerprint', 'temperature', 'max_tokens'}
 ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'internal_error', 'provider_bad_request', 'provider_auth_failed',
           'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
@@ -46,6 +47,10 @@ def now():
 
 def safe_id(value):
     return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', value) else None
+
+
+def safe_model_id(value):
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', value) else None
 
 
 def context(headers):
@@ -96,8 +101,14 @@ class Span:
         for key, value in fields.items():
             if key not in FIELDS:
                 raise ValueError('non-allowlisted telemetry field')
-            if key in {'request_model', 'response_model', 'provider_request_id', 'ticket_id', 'ticket_class'}:
+            if key in {'request_model', 'response_model'}:
+                value = safe_model_id(value)
+            if key in {'provider_request_id', 'ticket_id', 'ticket_class'}:
                 value = safe_id(value)
+            if key == 'prompt_version' and not (isinstance(value, str) and re.fullmatch(r'chat:v[1-9][0-9]*', value)):
+                raise ValueError('invalid prompt version')
+            if key == 'prompt_fingerprint' and not (isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)):
+                raise ValueError('invalid prompt fingerprint')
             if key in {'tenant_id', 'conversation_id'} and (type(value) is not int or value <= 0):
                 continue
             if key == 'response_model' and value == 'anchor-reasoning-replay':

@@ -1,21 +1,23 @@
 import asyncio
+import json
 import os
 import random
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 
 try:
-    from .contracts import InferResponse, Usage, TriageLabels
-    from .prompts import render, render_structured
+    from .contracts import InferResponse, Usage, TriageLabels, PromptContract
+    from .prompts import render, render_structured, render_chat, contract_fingerprint
     from .provider import (ProviderError, ReplayProvider, LiveProvider,
                            configured_provider, classify, safe_retry_after, structured_record)
     from .observability import span, tokens_from_usage, estimate, PRICE_VERSION
     from .reasoning import request_fields
     from .schemas import TRIAGE_FORMAT, InvalidModelOutput, validate_triage
 except ImportError:
-    from contracts import InferResponse, Usage, TriageLabels
-    from prompts import render, render_structured
+    from contracts import InferResponse, Usage, TriageLabels, PromptContract
+    from prompts import render, render_structured, render_chat, contract_fingerprint
     from provider import (ProviderError, ReplayProvider, LiveProvider,
                           configured_provider, classify, safe_retry_after, structured_record)
     from observability import span, tokens_from_usage, estimate, PRICE_VERSION
@@ -25,6 +27,40 @@ except ImportError:
 MAX_ATTEMPTS = 3
 TOTAL_DEADLINE = 4.0
 BACKOFF_CAP = 1.0
+
+
+def selected_contract(prompt, contract=None):
+    value = contract if contract is not None else getattr(prompt, 'prompt_contract', None)
+    return PromptContract.model_validate(value) if value is not None else None
+
+
+def contract_fields(contract):
+    return dict(prompt_version=contract.version,
+                prompt_fingerprint=contract_fingerprint(contract),
+                request_model=contract.model_id, temperature=contract.temperature,
+                max_tokens=contract.max_tokens)
+
+
+class PromptReplayProvider:
+    """Authored chat fixtures; no network and no dependence on legacy fixture keys."""
+    def key(self):
+        return 'offline-prompt-contract'
+
+    @asynccontextmanager
+    async def client(self):
+        def respond(request):
+            payload = json.loads(request.content)
+            text = payload['messages'][-1]['content']
+            reply = 'I can help with your refund request.'
+            if 'Support:' in text:
+                reply = 'Support: ' + reply
+            return httpx.Response(200, json={
+                'model': payload['model'],
+                'choices': [{'message': {'content': reply}, 'finish_reason': 'stop'}],
+                'usage': {'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30},
+            })
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            yield client
 
 
 class LlmClient:
@@ -42,20 +78,78 @@ class LlmClient:
         self.jitter = jitter or (lambda: random.uniform(0, 0.05))
         self.attempts = 0
 
-    async def stream_tokens(self, prompt):
-        try:
-            from .provider import stream_tokens
-        except ImportError:
-            from provider import stream_tokens
-        source = stream_tokens(self.provider, prompt)
+    async def stream_tokens(self, prompt, *, contract=None):
+        contract = selected_contract(prompt, contract)
+        if contract is not None:
+            source = self._stream_contract(prompt, contract)
+        else:
+            try:
+                from .provider import stream_tokens
+            except ImportError:
+                from provider import stream_tokens
+            source = stream_tokens(self.provider, prompt)
         try:
             async for delta in source:
                 yield delta
         finally:
             await source.aclose()
 
-    def complete(self, prompt, system=None, max_tokens=256, *, effort=None):
-        return asyncio.run(self.complete_result(prompt, system, max_tokens, effort=effort)).reply
+    async def _stream_contract(self, prompt, contract):
+        if isinstance(self.provider, (ReplayProvider, PromptReplayProvider)):
+            result = await self.complete_result(prompt, contract=contract)
+            for start in range(0, len(result.reply), 16):
+                yield result.reply[start:start + 16]
+            return
+        payload = {'model': contract.model_id,
+                   'messages': [{'role': 'user', 'content': render_chat(contract, prompt)}],
+                   'temperature': contract.temperature, 'max_tokens': contract.max_tokens,
+                   'stream': True, 'stream_options': {'include_usage': True}}
+        with span('llm.call', stage='provider', **contract_fields(contract)) as telemetry:
+            telemetry.set(attempts=1)
+            try:
+                async with asyncio.timeout(TOTAL_DEADLINE):
+                    async with self.provider.client() as client:
+                        async with client.stream(
+                            'POST', 'https://api.openai.com/v1/chat/completions',
+                            headers={'Authorization': 'Bearer ' + self.provider.key()},
+                            json=payload, timeout=httpx.Timeout(2.0, connect=1.0),
+                        ) as response:
+                            telemetry.set(status_code=response.status_code,
+                                          provider_request_id=response.headers.get('x-request-id'))
+                            if response.status_code != 200:
+                                await response.aread()
+                                raise classify(response)
+                            async for line in response.aiter_lines():
+                                if not line.startswith('data:'):
+                                    continue
+                                data = line[5:].strip()
+                                if data == '[DONE]':
+                                    return
+                                try:
+                                    event = json.loads(data)
+                                    telemetry.set(response_model=event.get('model'))
+                                    if event.get('usage'):
+                                        usage = Usage.model_validate(event['usage'])
+                                        telemetry.set(tokens=tokens_from_usage(usage))
+                                    for choice in event.get('choices', []):
+                                        content = choice.get('delta', {}).get('content')
+                                        if content is not None:
+                                            if not isinstance(content, str):
+                                                raise ValueError('invalid delta')
+                                            yield content
+                                        if choice.get('finish_reason'):
+                                            telemetry.set(finish_reason=choice['finish_reason'])
+                                except (ValueError, KeyError, TypeError):
+                                    raise ProviderError('invalid_provider_response') from None
+                            raise ProviderError('invalid_provider_response')
+            except (TimeoutError, httpx.TimeoutException):
+                raise ProviderError('provider_timeout', retryable=True) from None
+            except (httpx.ConnectError, httpx.ReadError):
+                raise ProviderError('provider_transport_error', retryable=True) from None
+
+    def complete(self, prompt, system=None, max_tokens=256, *, effort=None, contract=None):
+        return asyncio.run(self.complete_result(
+            prompt, system, max_tokens, effort=effort, contract=contract)).reply
 
     def complete_triage(self, ticket, *, variant='zero_shot', fixture_id=None):
         prompt = render(variant, ticket)
@@ -85,19 +179,37 @@ class LlmClient:
         return triage
 
     async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None,
-                              response_format=None):
+                              response_format=None, contract=None):
+        contract = selected_contract(prompt, contract)
+        if contract is not None:
+            if system is not None or effort is not None or response_format is not None:
+                raise ValueError('chat contract cannot be combined with other prompt policies')
+            if isinstance(self.provider, ReplayProvider):
+                client = LlmClient(PromptReplayProvider(), sleep=self.sleep,
+                                   clock=self.clock, jitter=self.jitter)
+                try:
+                    return await client.complete_result(prompt, contract=contract)
+                finally:
+                    self.attempts = client.attempts
+            prompt = render_chat(contract, prompt)
+            max_tokens = contract.max_tokens
         self.attempts = 0
         self.last_error = ProviderError('provider_timeout', retryable=True)
+        model = contract.model_id if contract else os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+        offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider))
         with span('llm.call', stage='provider',
-                  request_model=os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
+                  request_model=model,
                   response_model=None, currency='USD', price_version=PRICE_VERSION,
-                  cost_basis='offline_replay_estimate' if isinstance(self.provider, ReplayProvider)
+                  cost_basis='offline_replay_estimate' if offline
                   else 'published_price_estimate') as telemetry:
             self.telemetry = telemetry
             try:
-                model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-                fields = request_fields(model, effort, max_tokens,
-                                        offline=isinstance(self.provider, ReplayProvider))
+                if contract is not None:
+                    telemetry.set(**contract_fields(contract))
+                    fields = {'temperature': contract.temperature}
+                else:
+                    fields = request_fields(model, effort, max_tokens,
+                                            offline=isinstance(self.provider, ReplayProvider))
                 if response_format is not None:
                     fields = dict(fields or {})
                     fields['response_format'] = response_format
@@ -109,9 +221,11 @@ class LlmClient:
                 if fixture_ms is not None:
                     telemetry.set(fixture_latency_ms=fixture_ms,
                                   fixture_latency_basis='authored_example')
-                return await asyncio.wait_for(
-                    self._run(prompt, system, max_tokens, fields), timeout=TOTAL_DEADLINE
-                )
+                if contract is not None:
+                    operation = self._run(prompt, system, max_tokens, fields, model=contract.model_id)
+                else:
+                    operation = self._run(prompt, system, max_tokens, fields)
+                return await asyncio.wait_for(operation, timeout=TOTAL_DEADLINE)
             except asyncio.TimeoutError:
                 raise self._final_error() from None
             finally:
@@ -123,13 +237,13 @@ class LlmClient:
         error.retry_after = safe_retry_after(error.retry_after)
         return error
 
-    async def _run(self, prompt, system, max_tokens, reasoning_fields=None):
+    async def _run(self, prompt, system, max_tokens, reasoning_fields=None, *, model=None):
         key = self.provider.key()
         messages = []
         if system is not None:
             messages.append({'role': 'system', 'content': system})
         messages.append({'role': 'user', 'content': prompt})
-        payload = {'model': os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
+        payload = {'model': model or os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
                    'messages': messages, 'max_tokens': max_tokens}
         if reasoning_fields:
             if 'max_completion_tokens' in reasoning_fields:
@@ -170,9 +284,9 @@ class LlmClient:
                                 finish_reason=choice['finish_reason'], attempts=self.attempts,
                             )
                             tokens = tokens_from_usage(usage)
-                            model = body.get('model')
-                            self.telemetry.set(response_model=model, tokens=tokens,
-                                               cost_estimate=estimate(model, tokens),
+                            response_model = body.get('model')
+                            self.telemetry.set(response_model=response_model, tokens=tokens,
+                                               cost_estimate=estimate(response_model, tokens),
                                                finish_reason=result.finish_reason,
                                                completion_status='incomplete' if result.finish_reason == 'length'
                                                else 'completed' if result.finish_reason == 'stop' else 'other')

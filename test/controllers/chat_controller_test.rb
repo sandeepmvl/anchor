@@ -8,12 +8,14 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
   setup do
     @old_provider = Rails.configuration.x.llm[:provider]
     Rails.configuration.x.llm[:provider] = "stub"
-    @keys = %w[ANCHOR_AI_SECRET ANCHOR_AI_URL ANCHOR_AI_OPEN_TIMEOUT ANCHOR_AI_READ_TIMEOUT]
+    @keys = %w[ANCHOR_AI_SECRET ANCHOR_AI_URL ANCHOR_AI_OPEN_TIMEOUT ANCHOR_AI_READ_TIMEOUT
+      ANCHOR_CHAT_PROMPT_VERSION]
     @previous = @keys.to_h { |key| [key, ENV[key]] }
     ENV["ANCHOR_AI_SECRET"] = SecureRandom.hex(24)
     ENV["ANCHOR_AI_URL"] = "http://127.0.0.1:8000/v1/infer"
     ENV["ANCHOR_AI_OPEN_TIMEOUT"] = "2"
     ENV["ANCHOR_AI_READ_TIMEOUT"] = "5"
+    ENV["ANCHOR_CHAT_PROMPT_VERSION"] = "chat:v1"
   end
 
   teardown do
@@ -51,10 +53,11 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
         "X-Anchor-Secret" => ENV.fetch("ANCHOR_AI_SECRET"),
         "Content-Type" => "application/json"
       },
-      body: JSON.generate(
+      body: JSON.parse(JSON.generate(
         version: "v1", conversation_id: 1,
-        message: "Where is my order?", tenant_id: 1
-      )
+        message: "Where is my order?", tenant_id: 1,
+        prompt_contract: PromptRegistry::V1.stringify_keys.merge("version" => "chat:v1")
+      ))
     )
   end
 

@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 VARIANTS = ('zero_shot', 'few_shot', 'cot')
 
 POLICY = '''Classify a support ticket for fictional tenant Harbor Outfitters.
@@ -37,3 +40,13 @@ def render(variant, ticket):
 
 def render_structured(ticket):
     return POLICY, ticket
+
+
+def render_chat(contract, ticket):
+    return contract.template.replace('{{ticket}}', str(ticket))
+
+
+def contract_fingerprint(contract):
+    material = json.dumps(contract.model_dump(), sort_keys=True,
+                          separators=(',', ':'), ensure_ascii=False)
+    return hashlib.sha256(material.encode('utf-8')).hexdigest()

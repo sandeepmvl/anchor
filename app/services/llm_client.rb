@@ -21,14 +21,15 @@ class LlmClient
     @provider = provider
   end
 
-  def complete(message)
+  def complete(message, contract: nil)
+    contract ||= message.prompt_contract if message.respond_to?(:prompt_contract)
     case @provider
     when "stub"
       CANNED_REPLY
     when "openai"
-      http_complete(message)
+      http_complete(message, contract: contract)
     when "http"
-      http_complete(message)
+      http_complete(message, contract: contract)
     else
       raise ArgumentError, "unknown provider #{@provider.inspect}"
     end
@@ -40,7 +41,8 @@ class LlmClient
     end
   end
 
-  def stream(message)
+  def stream(message, contract: nil)
+    contract ||= message.prompt_contract if message.respond_to?(:prompt_contract)
     AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
       config = YAML.safe_load(ERB.new(Rails.root.join('config/llm.yml').read).result).fetch('shared')
       uri = URI(config.fetch('url').sub(%r{/$}, '') + '/stream')
@@ -57,7 +59,9 @@ class LlmClient
       request['Accept'] = 'text/event-stream'
       request['X-Anchor-Secret'] = secret
       span.headers.each { |key, value| request[key] = value }
-      request.body = JSON.generate(version: 'v1', conversation_id: 1, message: message, tenant_id: 1)
+      payload = { version: 'v1', conversation_id: 1, message: message, tenant_id: 1 }
+      payload[:prompt_contract] = contract unless contract.nil?
+      request.body = JSON.generate(payload)
       http.start do
         http.request(request) do |response|
           status = response.code.to_i
@@ -93,13 +97,13 @@ class LlmClient
     key
   end
 
-  def http_complete(message)
+  def http_complete(message, contract: nil)
     AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
-      perform_http_complete(message, span)
+      perform_http_complete(message, span, contract: contract)
     end
   end
 
-  def perform_http_complete(message, span, structured: false)
+  def perform_http_complete(message, span, structured: false, contract: nil)
     config = YAML.safe_load(ERB.new(Rails.root.join("config/llm.yml").read).result).fetch("shared")
     uri = URI(config.fetch("url"))
     secret = ENV.fetch("ANCHOR_AI_SECRET")
@@ -118,9 +122,9 @@ class LlmClient
     request["Content-Type"] = "application/json"
     request["X-Anchor-Secret"] = secret
     span.headers.each { |key, value| request[key] = value }
-    request.body = JSON.generate(
-      version: "v1", conversation_id: 1, message: message, tenant_id: 1
-    )
+    payload = { version: 'v1', conversation_id: 1, message: message, tenant_id: 1 }
+    payload[:prompt_contract] = contract unless structured || contract.nil?
+    request.body = JSON.generate(payload)
     response = http.request(request)
     status = response.code.to_i
     span.set(status_code: status)

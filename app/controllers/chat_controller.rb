@@ -20,6 +20,12 @@ class ChatController < ApplicationController
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
+      config = YAML.safe_load(ERB.new(Rails.root.join('config/llm.yml').read).result).fetch('shared')
+      selector = params.fetch(:prompt_version, config.fetch('default_prompt_version'))
+      contract = PromptRegistry.resolve(selector)
+      Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
+        prompt_version: contract.fetch('version'))
+      message = PromptRegistry::Message.new(message, contract)
       unless stream_request?
         reply = LlmClient.new.complete(message)
         render json: { reply: reply }
@@ -31,6 +37,8 @@ class ChatController < ApplicationController
       ActiveRecord::Base.connection_pool.release_connection
       relay(message)
     end
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: 'unknown_prompt_version' }, status: :unprocessable_entity
   ensure
     response.stream.close if stream_request?
   end
