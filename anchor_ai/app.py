@@ -550,3 +550,11 @@ def extract_ticket_attachment(raw, *, kind, token, secret, expected_scope,
 
 from anchor_ai.realtime import configure_product
 configure_product(app)
+
+
+async def public_faq_answer(token, query, *, path, runtime=None):
+    """Internal chat/RAG seam. The runtime owns verified scope, not request JSON."""
+    runtime = runtime or getattr(app.state, 'semantic_answer_runtime', None)
+    if runtime is None:
+        raise HTTPException(status_code=503, detail='semantic_answer_not_configured')
+    return await runtime.answer(token, query, path=path)

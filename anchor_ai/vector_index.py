@@ -127,3 +127,24 @@ class VectorIndex:
         hits = self.search(str(tenant_id), space, client.embed(text, gen), k)
         return {'generation_id': gen['id'], 'model': space.model,
                 'dimensions': space.dimensions, 'chunks_checked': len(rows), 'hits': hits}
+
+
+def semantic_ann_candidates(vectors, query, k):
+    """Only accept a caller-filtered partition; never search a global cache."""
+    import faiss
+    if k < 1:
+        raise ValueError('invalid_candidate_count')
+    matrix = np.ascontiguousarray(vectors, dtype=np.float32)
+    q = np.ascontiguousarray([query], dtype=np.float32)
+    if (matrix.ndim != 2 or q.shape != (1, matrix.shape[1])
+            or not np.isfinite(matrix).all() or not np.isfinite(q).all()):
+        raise ValueError('invalid_ann_vectors')
+    # The smoke path builds an ephemeral index. Production needs a maintained
+    # partition index to amortize construction; benchmark that lifecycle too.
+    faiss.omp_set_num_threads(1)
+    index = faiss.IndexHNSWFlat(matrix.shape[1], 16, faiss.METRIC_INNER_PRODUCT)
+    index.hnsw.efConstruction = 40
+    index.hnsw.efSearch = max(64, k)
+    index.add(matrix)
+    _, positions = index.search(q, min(k, len(matrix)))
+    return [int(i) for i in positions[0] if i >= 0]

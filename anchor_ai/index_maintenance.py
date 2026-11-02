@@ -293,3 +293,13 @@ def retrieval_snapshot(db, tenant):
         if owns_transaction:
             # End only our read transaction, never a caller's transaction.
             db.rollback()
+
+
+def scoped_generation_key(gen):
+    """Resolve from active() or retrieval_snapshot() on each request."""
+    if not gen or gen['status'] != 'ready':
+        raise ValueError('no_ready_cache_generation')
+    valid_tenant(gen['tenant_id'])
+    if type(gen['id']) is not int or type(gen['epoch']) is not int:
+        raise ValueError('invalid_cache_generation')
+    return f"{gen['tenant_id']}:{gen['id']}:{gen['epoch']}"

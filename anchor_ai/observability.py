@@ -553,3 +553,23 @@ class LatencyBoundary:
                 self.sink(record)
             else:
                 LOGGER.info(json.dumps(record, separators=(',', ':')))
+
+
+CACHE_FIELDS = {'cache_outcome', 'cache_reason', 'cache_lookup_mode',
+                'cache_candidates', 'cache_lookup_ms'}
+FIELDS.update(CACHE_FIELDS)
+
+
+def emit_semantic_cache(record):
+    """No text, fingerprints, vectors, or foreign candidate metadata."""
+    if (set(record) != CACHE_FIELDS
+            or record['cache_outcome'] not in {'hit', 'miss', 'bypass'}
+            or record['cache_reason'] not in {'exact', 'semantic', 'no_match',
+                'unclassified', 'personalized', 'action_bearing', 'permission_filtered', 'pii'}
+            or record['cache_lookup_mode'] not in {'none', 'linear', 'ann'}
+            or type(record['cache_candidates']) is not int or record['cache_candidates'] < 0
+            or type(record['cache_lookup_ms']) not in (float, int)
+            or not math.isfinite(record['cache_lookup_ms']) or record['cache_lookup_ms'] < 0):
+        raise ValueError('unsafe_cache_telemetry')
+    with span('python.semantic_cache', stage='cache') as item:
+        item.set(**record)

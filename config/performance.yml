@@ -11,3 +11,8 @@ stream_pacing:
   chunk_chars: 3
   max_buffer_chars: 96
   max_flush_delay: 0.12
+
+semantic_cache:
+  replay_scope: in_process_offline
+  record_content: false
+  evidence: policy_not_embedding_quality

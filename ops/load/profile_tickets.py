@@ -110,11 +110,63 @@ def report(rows):
     }
 
 
+async def semantic_cache_probe():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    import yaml
+    from anchor_ai.app import public_faq_answer
+    from anchor_ai.runtime import SemanticAnswerRuntime
+    from anchor_ai.semantic_cache import Snapshot, Generated, SemanticCache
+    settings = yaml.safe_load(Path('config/performance.yml').read_text())['semantic_cache']
+    if settings['record_content'] is not False:
+        raise ValueError('unsafe_cache_profile')
+    cases = [json.loads(line) for line in Path('eval/datasets/semantic_cache_cases.jsonl').read_text().splitlines()]
+    results = []
+    for path in ('chat', 'rag'):
+        events, calls = [], []
+        state = {'kb': '1:1:0'}
+        def verify(token):
+            if token not in {'one', 'two'}:
+                raise ValueError('fixture_token_rejected')
+            return SimpleNamespace(tenant_id=1 if token == 'one' else 2, role='customer')
+        def resolve(identity, query, answer_path):
+            return Snapshot(identity.tenant_id, identity.role, 'public', 'en', 'p1',
+                            answer_path, state['kb'], 'e1', 'prompt1', 'model1', 'r1', 'public_faq')
+        def embed(query, snapshot):
+            score = next(c['score'] for c in cases if c['query'] == query)
+            return [score, (1 - score * score) ** .5]
+        async def generate(identity, query, snapshot):
+            calls.append(1)
+            return Generated('Cancel from Billing.', public_faq=True)
+        runtime = SemanticAnswerRuntime(verify=verify, resolve=resolve, embed=embed,
+            generate=generate, cache=SemanticCache(emit=events.append))
+        async def ask(token, query):
+            return await public_faq_answer(token, query, path=path, runtime=runtime)
+        await ask('one', cases[0]['query'])
+        await ask('one', cases[1]['query'])
+        await ask('one', cases[0]['query'])
+        assert len(calls) == 1
+        await ask('two', cases[0]['query'])
+        assert len(calls) == 2
+        state['kb'] = '1:1:1'
+        await ask('one', cases[0]['query'])
+        assert len(calls) == 3
+        results.append(dict(path=path, cold='miss', paraphrase='hit', exact='hit',
+                            repeat_answer_model_calls=1, other_tenant='miss', changed_kb='miss'))
+    return dict(scope=settings['replay_scope'], results=results,
+                not_verified=['live embedding quality', 'production authentication',
+                              'HTTP integration', 'cross-worker consistency', 'hosted latency'])
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--bridge-traceparent')
     parser.add_argument('--mode', choices=['chat', 'rag'], default='rag')
+    parser.add_argument('--semantic-cache', action='store_true')
     args = parser.parse_args()
+    if args.semantic_cache:
+        print(json.dumps(await semantic_cache_probe(), indent=2))
+        return
     config = configuration()
     if not config['enabled']:
         raise SystemExit('profiling_disabled')

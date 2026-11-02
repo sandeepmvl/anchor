@@ -1,0 +1,7 @@
+threshold: 0.97
+ttl_seconds: 60
+ann_tenant_entries: 3000
+candidate_count: 16
+max_tenant_entries: 5000
+max_entries: 20000
+record_content: false

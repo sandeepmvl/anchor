@@ -308,9 +308,9 @@ class BoundedRuntime:
                 s['attempts'][-1]['result'] = 'error'
                 self.event(s, 'memory_write', outcome='error')
                 return self.stop(s, 'failed', 'tool_error')
+            s['attempts'][-1]['result'] = 'success'
             self.event(s, 'tool_dispatch', action=action, observation=observation,
                        idempotency_key=s['key'] if action == 'issue_refund' else None)
-            s['attempts'][-1]['result'] = 'success'
             s['memory'].append(dict(action=action, observation=observation))
             self.event(s, 'memory_write', outcome='success')
             self.event(s, 'escalation_trigger', reason=None)
@@ -357,3 +357,56 @@ def replay_trajectory_fixture(fixture, route, *, delegated=False):
 def voice_authority():
     """Voice is a read-only channel; prose cannot grant a tool approval."""
     return {'confirmed': False, 'dispatch_allowed': False, 'approval_required': True}
+
+
+class SemanticAnswerRuntime:
+    """Shared read-only boundary; never invoke financial tools from generate.
+
+    verify(token) returns server-verified identity with tenant_id and role.
+    resolve(identity, query, path) synchronously authorizes and returns Snapshot.
+    embed(query, snapshot) returns a vector in snapshot.embedding_version.
+    await generate(identity, query, snapshot) returns Generated provenance.
+    """
+    def __init__(self, *, verify, resolve, embed, generate, cache,
+                 fixture_adapters=True, production=False, release_evidence=None):
+        required = {'authenticated_paths', 'embedding_calibration', 'ann_recall'}
+        if production and (fixture_adapters or not release_evidence
+                           or any(release_evidence.get(k) is not True for k in required)):
+            raise ValueError('semantic_cache_release_evidence_missing')
+        self.verify, self.resolve = verify, resolve
+        self.embed, self.generate, self.cache = embed, generate, cache
+
+    async def answer(self, token, query, *, path):
+        from anchor_ai.semantic_cache import Snapshot, Generated
+        if not token or path not in {'chat', 'rag'}:
+            raise ContextError('cache_context_rejected')
+        identity = self.verify(token)
+        if (identity is None or type(identity.tenant_id) is not int
+                or identity.tenant_id <= 0 or not identity.role):
+            raise ContextError('cache_identity_rejected')
+
+        def fresh():
+            s = self.resolve(identity, query, path)
+            if (not isinstance(s, Snapshot) or s.tenant_id != identity.tenant_id
+                    or s.role != identity.role or s.answer_path != path):
+                raise ContextError('cache_scope_rejected')
+            return s
+
+        snapshot = fresh()
+        eligible = self.cache.eligible(snapshot, query) == 'public_faq'
+        # Bypasses do not embed, store, or dispatch any action from this boundary.
+        vector = self.embed(query, snapshot) if eligible else None
+        hit = self.cache.lookup(snapshot, query, vector)
+        current = fresh()
+        if hit is not None and current == snapshot:
+            return hit
+        if current != snapshot:
+            snapshot = current
+            eligible = self.cache.eligible(snapshot, query) == 'public_faq'
+            vector = self.embed(query, snapshot) if eligible else None
+        generated = await model_call(self.generate, identity, query, snapshot)
+        if not isinstance(generated, Generated):
+            raise ValueError('missing_answer_provenance')
+        if eligible and fresh() == snapshot:
+            self.cache.store(snapshot, query, vector, generated)
+        return generated.text

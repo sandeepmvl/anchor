@@ -1,0 +1,10 @@
+{"id":"seed","query":"How do I cancel my plan?","score":1.0,"reusable":true}
+{"id":"paraphrase","query":"Where can I end my subscription?","score":0.99,"reusable":true}
+{"id":"opposite","query":"How do I keep my plan from cancelling?","score":0.96,"reusable":false}
+{"id":"unrelated","query":"Where is the support phone number?","score":0.0,"reusable":false}
+{"id":"personalized","query":"Am I eligible for a refund?","score":1.0,"bypass":"personalized"}
+{"id":"action","query":"Refund my order now","score":1.0,"bypass":"action_bearing"}
+{"id":"filtered","query":"What is the restricted cancellation exception?","score":1.0,"bypass":"permission_filtered"}
+{"id":"private","query":"Email the policy to person@example.com","score":1.0,"bypass":"pii"}
+{"id":"unsafe-answer","query":"What does the account-specific note say?","score":1.0,"unsafe_answer":true}
+{"id":"unclassified","query":"Could you inspect my situation?","score":1.0,"bypass":"unclassified"}
