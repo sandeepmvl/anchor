@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import yaml
+from anchor_ai.tenant_scope import check_bound_tenant
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class VectorIndex:
 
     @staticmethod
     def _key(tenant_id, generation):
+        check_bound_tenant(tenant_id)
         if not isinstance(tenant_id, str) or not tenant_id:
             raise ValueError('tenant_id must be a nonempty string')
         return tenant_id, generation
@@ -95,6 +97,7 @@ class VectorIndex:
     def search_active(self, db, tenant_id, text, client=None, k=10, authorized_document_ids=None):
         import json
         from .index_maintenance import active, EmbeddingClient
+        check_bound_tenant(tenant_id)
         client = client or EmbeddingClient()
         db.execute('BEGIN')
         try:

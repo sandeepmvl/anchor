@@ -6,6 +6,7 @@ class ChatController < ApplicationController
   skip_forgery_protection if: -> { action_name == 'create' && !stream_request? }
   class_attribute :answer_generator, default: nil
   around_action :profile_anchor_action
+  before_action :reject_untrusted_tenant_state, only: [:create, :cited]
   before_action :redact_chat_parameters, only: [:create, :cited]
   rescue_from PiiRedactionClient::Unavailable, with: :pii_unavailable
 
@@ -138,6 +139,14 @@ class ChatController < ApplicationController
 
   private
 
+  def reject_untrusted_tenant_state
+    return unless Rails.env.production? || ENV.key?('ANCHOR_TENANT_CREDENTIALS')
+    forbidden = %w[tenant_id organization_id conversation_id history summary_state checkpoint_id]
+    if forbidden.any? { |key| params.key?(key) }
+      render json: {error: 'untrusted_tenant_state'}, status: :forbidden
+    end
+  end
+
   def redact_chat_parameters
     selected = params.permit!.to_h.slice('message', 'history', 'summary_state', 'context')
     safe = PiiRedactionClient.value(selected)
@@ -151,6 +160,10 @@ class ChatController < ApplicationController
     ticket = TicketAccessPolicy.new(session).ticket(params[:ticket_id])
     @pii_conversation = Conversation.create!(organization_id: ticket.organization_id,
       ticket_id: ticket.id, pii_payload: {'ingestion' => message.to_s})
+    if Rails.env.production? || ENV.key?('ANCHOR_TENANT_CREDENTIALS')
+      request.env['anchor.trusted_retrieval_context'] = RetrievalClient::TrustedContext.new(
+        tenant_id: ticket.organization_id, conversation_id: @pii_conversation.id)
+    end
   rescue TicketAccessPolicy::Unauthenticated
     head :unauthorized
     throw :abort

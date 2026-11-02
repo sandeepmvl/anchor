@@ -4,6 +4,9 @@ import time
 
 import faiss
 import numpy as np
+from anchor_ai.tenant_scope import (
+    require_tenant, check_bound_tenant, has_scope, enforcement_enabled, ScopeError,
+)
 
 
 class RetrievalError(ValueError):
@@ -12,7 +15,6 @@ class RetrievalError(ValueError):
 
 class RecordedEmbeddingClient:
     """Offline default. A missing recording is an error, never a guessed vector."""
-
     def __init__(self, records):
         self.records = records
         self.calls = []
@@ -27,12 +29,18 @@ class RecordedEmbeddingClient:
 
 class DenseRetriever:
     def __init__(self, generation, tenant_id, embedding_client, index=None):
+        check_bound_tenant(tenant_id)
+        self._strict = has_scope() or enforcement_enabled()
         if type(tenant_id) is not int or tenant_id <= 0:
             raise RetrievalError('trusted_tenant_required')
+        if self._strict and index is not None:
+            raise RetrievalError('externally_populated_index_not_authorized')
         self.generation = copy.deepcopy(generation)
         self.tenant_id = tenant_id
         self.embedding_client = embedding_client
-        self.chunks = self.generation['chunks']
+        self.chunks = ([c for c in self.generation['chunks'] if c['tenant_id'] == tenant_id]
+                       if self._strict else self.generation['chunks'])
+        self.generation['chunks'] = self.chunks
         self.dimensions = self.generation['dimensions']
         self.metric = self.generation['metric']
         self.normalize = self.generation['normalize']
@@ -78,6 +86,10 @@ class DenseRetriever:
         return scored
 
     def search(self, query, k):
+        if self._strict:
+            require_tenant(self.tenant_id)
+        elif has_scope() or enforcement_enabled():
+            raise ScopeError('legacy_index_not_authorized')
         if not isinstance(query, str) or not query.strip():
             raise RetrievalError('query_required')
         if type(k) is not int or not 1 <= k <= 20:
@@ -98,6 +110,8 @@ class DenseRetriever:
             if chunk is None:
                 raise RetrievalError('index_generation_mismatch')
             if chunk['tenant_id'] != self.tenant_id:
+                if self._strict:
+                    raise RetrievalError('index_generation_mismatch')
                 continue
             score = -float(native) if self.metric == 'l2' else float(native)
             if not math.isfinite(score):
@@ -120,7 +134,9 @@ class DenseRetriever:
             'k': k,
             'overfetch': 10,
             'post_filter_count': count,
-            'filter_path': 'tenant_flat' if fallback else 'post_filter',
+            'candidate_count': len(self.chunks),
+            'filter_path': ('tenant_prefilter' if self._strict else
+                            ('tenant_flat' if fallback else 'post_filter')),
             'chunk_ids': [i for i, _ in selected],
             'scores': [score for _, score in selected],
             'embedding_ms': round((embedded_at - started) * 1000, 3),

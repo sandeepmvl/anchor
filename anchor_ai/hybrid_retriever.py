@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from anchor_ai.observability import span
+from anchor_ai.tenant_scope import check_bound_tenant
 
 
 def rrf_fuse(dense, sparse, k=60):
@@ -66,6 +67,7 @@ class HybridRuntime:
         self.reranker = reranker
 
     async def retrieve(self, query, top_k=3, *, snapshot=None):
+        check_bound_tenant(self.tenant_id)
         if not query.strip() or len(query.encode('utf-8')) > 1800:
             raise ValueError('invalid_query')
         if type(top_k) is not int or not 1 <= top_k <= 20:
@@ -135,6 +137,7 @@ class HybridRuntime:
                         hits=hits)
 
     async def retrieve_analyzed(self, query, analyzer, top_k=3):
+        check_bound_tenant(self.tenant_id)
         if type(top_k) is not int or not 1 <= top_k <= 20:
             raise ValueError('invalid_top_k')
         with span('python.analyzed_retrieval', tenant_id=self.tenant_id,

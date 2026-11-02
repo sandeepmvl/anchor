@@ -6,6 +6,7 @@ from rank_bm25 import BM25Okapi
 
 from .index_maintenance import retrieval_snapshot, valid_tenant
 from .schemas import SparseHit
+from .tenant_scope import check_bound_tenant, ScopeError
 
 
 def tokenize(text):
@@ -30,6 +31,7 @@ class SparseRetriever:
         self.indexes = {}
 
     def search(self, query, tenant_id):
+        check_bound_tenant(tenant_id)
         valid_tenant(tenant_id)
         terms = tokenize(query)
         if not terms:
@@ -38,6 +40,8 @@ class SparseRetriever:
         if gen is None:
             self.indexes.pop(tenant_id, None)
             return []
+        if any(row['tenant_id'] != tenant_id for row in rows):
+            raise ScopeError('sparse_snapshot_scope_conflict')
         key = (gen['id'], gen['epoch'])
         cached = self.indexes.get(tenant_id)
         if cached is None or cached[0] != key:

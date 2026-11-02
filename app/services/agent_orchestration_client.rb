@@ -13,9 +13,13 @@ class AgentOrchestrationClient
     @transport = transport || method(:send_request)
   end
 
-  def execute(body, execution_context:, request_id:, traceparent:, idempotency_key: nil)
+  def execute(body, execution_context:, request_id:, traceparent:, idempotency_key: nil, tenant_credential: nil)
     raise Unavailable, "service_not_configured" if @secret.to_s.empty?
     raise ArgumentError, "missing_execution_context" if execution_context.to_s.empty?
+    if (Rails.env.production? || ENV.key?('ANCHOR_TENANT_CREDENTIALS')) &&
+        (!tenant_credential.is_a?(String) || tenant_credential.bytesize < 32)
+      raise Unavailable, 'tenant_credential_required'
+    end
     # Approval is application state, never a field supplied by customer evidence.
     if body.is_a?(Hash) && (body.keys.map(&:to_s) & %w[approval confirmed execution_context]).any?
       raise ArgumentError, "untrusted_authorization_fields"
@@ -24,6 +28,7 @@ class AgentOrchestrationClient
     request["Content-Type"] = "application/json"
     request["X-Anchor-Secret"] = @secret
     request["X-Anchor-Context"] = execution_context
+    request['X-Anchor-Tenant-Credential'] = tenant_credential if tenant_credential
     request["X-Request-Id"] = request_id
     request["traceparent"] = traceparent
     request["Idempotency-Key"] = idempotency_key if idempotency_key

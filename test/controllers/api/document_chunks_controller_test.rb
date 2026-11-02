@@ -39,7 +39,7 @@ class Api::DocumentChunksControllerTest < ActionDispatch::IntegrationTest
 
   test 'a tenant parameter cannot change authenticated scope' do
     get '/api/document_chunks', params: { ids: [@foreign.to_s], tenant_id: 2 }, headers: @headers
-    assert_response :not_found
+    assert_response :forbidden
   end
 
   test 'rejects missing credentials' do

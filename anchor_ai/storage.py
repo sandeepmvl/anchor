@@ -44,7 +44,6 @@ class NativeSessionStore:
         self.db.close()
 
 
-# Existing document, memory and escalation storage remains unchanged.
 import json
 import sqlite3
 from pathlib import Path
@@ -199,3 +198,130 @@ def connect_escalations(path):
     except Exception:
         db.close()
         raise
+
+
+from .tenant_scope import require_tenant, scoped_key, ScopeError
+
+
+def migrate_tenant_ownership(db, audited_documents=None):
+    """Privileged, transactional backfill. Never infer tenancy from content."""
+    audited_documents = {} if audited_documents is None else audited_documents
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        for table in ('documents', 'document_chunks'):
+            columns = {row[1] for row in db.execute('PRAGMA table_info(' + table + ')')}
+            if not columns:
+                raise ValueError('missing_ownership_table')
+            if 'tenant_id' not in columns:
+                db.execute('ALTER TABLE ' + table + ' ADD COLUMN tenant_id INTEGER')
+        for ident, tenant in db.execute('SELECT id,tenant_id FROM documents').fetchall():
+            expected = audited_documents.get(ident, tenant)
+            if type(expected) is not int or expected <= 0 or tenant not in (None, expected):
+                raise ValueError('unresolved_document_ownership')
+            db.execute('UPDATE documents SET tenant_id=? WHERE id=?', (expected, ident))
+        rows = db.execute('''SELECT c.id,c.tenant_id,d.tenant_id FROM document_chunks c
+            LEFT JOIN documents d ON d.id=c.document_id''').fetchall()
+        for ident, tenant, expected in rows:
+            if expected is None or tenant not in (None, expected):
+                raise ValueError('conflicting_chunk_ownership')
+            db.execute('UPDATE document_chunks SET tenant_id=? WHERE id=?', (expected, ident))
+        # Existing schemas retain their columns and indexes. Triggers cover both
+        # old nullable columns and current NOT NULL columns without table rebuilds.
+        for operation in ('INSERT', 'UPDATE'):
+            suffix = operation.lower()
+            db.execute('''CREATE TRIGGER IF NOT EXISTS tenant_documents_''' + suffix + '''
+                BEFORE ''' + operation + ''' ON documents
+                WHEN NEW.tenant_id IS NULL OR typeof(NEW.tenant_id)!='integer' OR NEW.tenant_id<=0
+                BEGIN SELECT RAISE(ABORT,'invalid_document_tenant'); END''')
+            db.execute('''CREATE TRIGGER IF NOT EXISTS tenant_chunks_''' + suffix + '''
+                BEFORE ''' + operation + ''' ON document_chunks
+                WHEN NEW.tenant_id IS NULL OR NOT EXISTS
+                  (SELECT 1 FROM documents d WHERE d.id=NEW.document_id AND d.tenant_id=NEW.tenant_id)
+                  OR (NEW.parent_id IS NOT NULL AND NOT EXISTS
+                    (SELECT 1 FROM document_chunks p WHERE p.id=NEW.parent_id
+                     AND p.tenant_id=NEW.tenant_id AND p.document_id=NEW.document_id))
+                BEGIN SELECT RAISE(ABORT,'invalid_chunk_tenant'); END''')
+        db.execute('''CREATE TRIGGER IF NOT EXISTS tenant_document_reassignment
+            BEFORE UPDATE OF tenant_id ON documents
+            WHEN OLD.tenant_id!=NEW.tenant_id
+            BEGIN SELECT RAISE(ABORT,'document_tenant_immutable'); END''')
+        db.execute('''CREATE TRIGGER IF NOT EXISTS tenant_chunk_reassignment
+            BEFORE UPDATE OF tenant_id ON document_chunks
+            WHEN OLD.tenant_id!=NEW.tenant_id
+            BEGIN SELECT RAISE(ABORT,'chunk_tenant_immutable'); END''')
+        db.execute('''CREATE TABLE IF NOT EXISTS tenant_conversation_state (
+            tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
+            conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
+            state_json TEXT NOT NULL,
+            PRIMARY KEY(tenant_id,conversation_id))''')
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+
+
+class TenantStorage:
+    """Scoped facade for retrieval snapshots and durable conversation state.
+
+    This is application enforcement, not SQLite row-level security. Do not
+    expose the underlying connection to customer-selected SQL.
+    """
+    def __init__(self, db):
+        self.db = db
+
+    def candidates(self, tenant_id=None):
+        tenant = require_tenant(tenant_id)
+        rows = self.db.execute('''SELECT c.* FROM document_chunks c
+            JOIN documents d ON d.id=c.document_id AND d.tenant_id=c.tenant_id
+            WHERE c.tenant_id=? AND d.tenant_id=? AND c.is_leaf=1 AND d.status='ready'
+            ORDER BY c.id''', (tenant, tenant))
+        return [dict(row) for row in rows]
+
+    def document(self, ident):
+        tenant = require_tenant()
+        row = self.db.execute('SELECT * FROM documents WHERE tenant_id=? AND id=?',
+                              (tenant, ident)).fetchone()
+        return dict(row) if row else None
+
+    def write_conversation(self, conversation_id, state, tenant_id=None):
+        tenant = require_tenant(tenant_id)
+        if type(conversation_id) is not int or conversation_id <= 0:
+            raise ValueError('invalid_conversation')
+        # The authenticated caller must also authorize this conversation within
+        # its tenant. A tenant boundary does not replace user-level RBAC.
+        safe = prepare(json.dumps(state, sort_keys=True, allow_nan=False))
+        with self.db:
+            self.db.execute('''INSERT INTO tenant_conversation_state VALUES (?,?,?)
+                ON CONFLICT(tenant_id,conversation_id) DO UPDATE SET state_json=excluded.state_json''',
+                (tenant, conversation_id, safe))
+
+    def conversation(self, conversation_id):
+        tenant = require_tenant()
+        row = self.db.execute('''SELECT state_json FROM tenant_conversation_state
+            WHERE tenant_id=? AND conversation_id=?''', (tenant, conversation_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def checkpoint_key(self, conversation_id, thread):
+        return scoped_key('checkpoint', conversation_id, thread)
+
+    def save_checkpoint(self, conversation_id, thread, state, tenant_id=None):
+        tenant = require_tenant(tenant_id)
+        key = self.checkpoint_key(conversation_id, thread)
+        with self.db:
+            self.db.execute('''CREATE TABLE IF NOT EXISTS tenant_state_checkpoints (
+                tenant_id INTEGER NOT NULL, checkpoint_key TEXT NOT NULL,
+                state_json TEXT NOT NULL, PRIMARY KEY(tenant_id,checkpoint_key))''')
+            self.db.execute('''INSERT INTO tenant_state_checkpoints VALUES (?,?,?)
+                ON CONFLICT(tenant_id,checkpoint_key) DO UPDATE SET state_json=excluded.state_json''',
+                (tenant, key, prepare(json.dumps(state, sort_keys=True, allow_nan=False))))
+        return key
+
+    def restore_checkpoint(self, conversation_id, thread):
+        tenant = require_tenant()
+        key = self.checkpoint_key(conversation_id, thread)
+        exists = self.db.execute("SELECT 1 FROM sqlite_master WHERE name='tenant_state_checkpoints'").fetchone()
+        if not exists:
+            return None
+        row = self.db.execute('''SELECT state_json FROM tenant_state_checkpoints
+            WHERE tenant_id=? AND checkpoint_key=?''', (tenant, key)).fetchone()
+        return json.loads(row[0]) if row else None

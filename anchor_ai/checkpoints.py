@@ -9,6 +9,8 @@ import uuid
 from contextlib import contextmanager
 
 from .pii import redact_graph
+from .tenant_scope import check_bound_tenant
+from .storage import TenantStorage
 
 
 def signed_token(claims, secret):
@@ -84,6 +86,7 @@ class CheckpointStore:
         return 'Checkpoint storage available; offline graph service ready.'
 
     def pending(self, thread, ticket, key, context):
+        check_bound_tenant(ticket['tenant_id'])
         safe = json.dumps(redact_graph(context), sort_keys=True)
         with self.db() as db:
             db.execute('''INSERT INTO agent_checkpoints
@@ -91,13 +94,17 @@ class CheckpointStore:
                 VALUES (?,?,?,?,'pending',?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
                 ON CONFLICT(thread_id) DO NOTHING''',
                 (ticket['tenant_id'], ticket['conversation_id'], thread, key, safe))
-            row = db.execute('SELECT * FROM agent_checkpoints WHERE thread_id=?', (thread,)).fetchone()
+            row = db.execute('SELECT * FROM agent_checkpoints WHERE thread_id=? AND tenant_id=?',
+                             (thread, ticket['tenant_id'])).fetchone()
+            if row is None:
+                raise ValueError('checkpoint_conflict')
             if (row['tenant_id'] != ticket['tenant_id'] or row['action_key'] != key or
                     row['context_json'] != safe):
                 raise ValueError('checkpoint_conflict')
 
     def inspect(self, thread, token):
         claims = actor_claims(token)
+        check_bound_tenant(claims['tenant_id'])
         with self.db() as db:
             row = db.execute('SELECT * FROM agent_checkpoints WHERE thread_id=? AND tenant_id=?',
                              (thread, claims['tenant_id'])).fetchone()
@@ -125,10 +132,18 @@ class CheckpointStore:
         approval = self.approval(thread, token, key)
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute("UPDATE agent_checkpoints SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE thread_id=?",
-                       (thread,))
-            db.execute("UPDATE agent_approvals SET status='consumed',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                       (approval['id'],))
+            db.execute("UPDATE agent_checkpoints SET status='completed',updated_at=CURRENT_TIMESTAMP WHERE thread_id=? AND tenant_id=?",
+                       (thread, approval['tenant_id']))
+            db.execute("UPDATE agent_approvals SET status='consumed',updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=?",
+                       (approval['id'], approval['tenant_id']))
+
+    def save_state(self, conversation_id, thread, state, tenant_id=None):
+        with self.db() as db:
+            return TenantStorage(db).save_checkpoint(conversation_id, thread, state, tenant_id)
+
+    def restore_state(self, conversation_id, thread):
+        with self.db() as db:
+            return TenantStorage(db).restore_checkpoint(conversation_id, thread)
 
     @contextmanager
     def lease(self, thread):

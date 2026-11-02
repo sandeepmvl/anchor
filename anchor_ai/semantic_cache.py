@@ -9,6 +9,7 @@ import yaml
 
 from anchor_ai.pii import prepare
 from anchor_ai.vector_index import semantic_ann_candidates
+from anchor_ai.tenant_scope import check_bound_tenant, require_tenant, scoped_key
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ class SemanticCache:
         return snapshot.eligibility
 
     def lookup(self, snapshot, query, vector=None):
+        check_bound_tenant(snapshot.tenant_id)
         started = self.clock()
         self.prune()
         reason = self.eligible(snapshot, query)
@@ -151,6 +153,7 @@ class SemanticCache:
         return best['answer']
 
     def store(self, snapshot, query, vector, generated):
+        check_bound_tenant(snapshot.tenant_id)
         if self.eligible(snapshot, query) != 'public_faq' or not generated.safe:
             return False
         self.prune()
@@ -163,6 +166,21 @@ class SemanticCache:
         while len(self.rows) > self.config['max_entries']:
             del self.rows[0]
         return True
+
+
+class TenantSemanticCache(SemanticCache):
+    """Strict entry point for authenticated workers and component tests."""
+    def partition_key(self, snapshot):
+        require_tenant(snapshot.tenant_id)
+        return scoped_key('semantic-cache', *snapshot.scope)
+
+    def lookup(self, snapshot, query, vector=None):
+        self.partition_key(snapshot)
+        return super().lookup(snapshot, query, vector)
+
+    def store(self, snapshot, query, vector, generated):
+        self.partition_key(snapshot)
+        return super().store(snapshot, query, vector, generated)
 
 
 async def with_answer_cache(cache, snapshot, query, vector, generate):

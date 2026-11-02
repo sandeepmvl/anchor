@@ -3,6 +3,9 @@ module Api
     def index
       tenant_id = service_tenant
       return head :unauthorized unless tenant_id
+      if params.key?(:tenant_id) && params[:tenant_id].to_s != tenant_id.to_s
+        return head :forbidden
+      end
 
       raw = params[:ids]
       unless raw.is_a?(Array) && raw.length.between?(1, 20) &&

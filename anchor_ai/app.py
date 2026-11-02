@@ -77,6 +77,13 @@ app = FastAPI(lifespan=lifespan)
 router = APIRouter(prefix='/v1')
 from anchor_ai.observability import LatencyBoundary, model_call
 app.add_middleware(LatencyBoundary)
+from anchor_ai.tenant_scope import TenantScopeMiddleware, ScopeError
+app.add_middleware(TenantScopeMiddleware)
+
+
+@app.exception_handler(ScopeError)
+async def tenant_scope_failed(request: Request, error: ScopeError):
+    return JSONResponse(status_code=403, content={'detail': 'tenant_scope_rejected'})
 
 
 @app.post('/v1/agent')

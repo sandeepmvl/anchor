@@ -79,6 +79,8 @@ class RetrievalClient
   private
 
   def timed_transport(payload, headers, path: nil)
+    credential = tenant_credential
+    headers = headers.merge('X-Anchor-Tenant-Credential' => credential) if credential
     operation = lambda do
       @transport ? @transport.call(payload, headers) : perform(payload, headers, path: path)
     end
@@ -91,6 +93,22 @@ class RetrievalClient
         operation.call
       end
     end
+  end
+
+  def tenant_credential
+    enabled = Rails.env.production? || ENV.key?('ANCHOR_TENANT_CREDENTIALS')
+    return nil unless enabled
+    credentials = JSON.parse(ENV.fetch('ANCHOR_TENANT_CREDENTIALS', '{}'))
+    unless credentials.is_a?(Hash) && credentials.any? && credentials.all? { |key, tenant|
+      key.is_a?(String) && key.bytesize >= 32 && tenant.is_a?(Integer) && tenant.positive?
+    }
+      raise Error, 'tenant_credentials_unavailable'
+    end
+    pair = credentials.find { |_key, tenant| tenant == @context.tenant_id }
+    raise Error, 'tenant_credential_required' unless pair
+    pair.first
+  rescue JSON::ParserError
+    raise Error, 'tenant_credentials_unavailable'
   end
 
   def perform(payload, headers, path: nil)
