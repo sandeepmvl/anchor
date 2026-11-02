@@ -46,4 +46,20 @@ namespace :golden do
       candidate_id: args[:id], corrected: JSON.parse(File.read(args[:correction])))
     puts "Staged #{draft.key} as a pending draft; published snapshots unchanged"
   end
+
+  # Input is an already authorized, immutable export, not a live tenant table.
+  task :regression_export, [:snapshot, :output] => :environment do |_task, args|
+    abort 'Production export requires a tenant-authorized integration' if Rails.env.production?
+    abort 'snapshot and output required' unless args[:snapshot] && args[:output]
+    manifest = JSON.parse(File.read('eval/datasets/regression_manifest_v2.json'))
+    snapshot = JSON.parse(File.read(args[:snapshot]))
+    abort 'Snapshot version mismatch' unless snapshot.fetch('snapshot') == manifest.fetch('snapshot')
+    abort 'Fixed cohort mismatch' unless snapshot.fetch('examples') == manifest.fetch('examples')
+    abort 'Expectation mismatch' unless snapshot.fetch('expected') == manifest.fetch('expected')
+    prompts = PromptRegistry.export_regression(tags: %w[chat:v1 chat:v2])
+    artifact = { source: 'authorized_snapshot_replay', manifest: manifest, prompts: prompts }
+    File.write(args[:output], JSON.pretty_generate(artifact))
+    puts JSON.pretty_generate(prompts.map { |p| p.slice('tag', 'version_id', 'sha256') })
+    puts 'Exported 20 fixed examples; production authorization and hosted quality not verified.'
+  end
 end

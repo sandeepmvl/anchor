@@ -49,6 +49,17 @@ def replay_dpo():
 
 
 def replay(candidate):
+    if candidate == 'prompt-regression-recorded':
+        from eval.regression_gate import gate
+        path = Path(__file__).resolve().parents[1] / 'tmp/regression_report.json'
+        try:
+            evidence = json.loads(path.read_text())
+            decision = gate(evidence, release=True)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            decision = {'passed': False, 'blockers': ['missing_or_invalid_regression_evidence'],
+                        'error': str(error)}
+        return {'decision': decision, 'deployment_approved': False,
+                'retrieval_evidence': 'existing_gates_still_required_not_replaced'}
     if candidate == 'dpo-recorded':
         return replay_dpo()
     if candidate in ('adapter-recorded', 'default-recorded'):

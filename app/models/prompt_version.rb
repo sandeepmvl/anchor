@@ -1,3 +1,6 @@
+require 'digest'
+require 'json'
+
 class PromptVersion < ApplicationRecord
   validates :version, format: { with: /\Achat:v[1-9][0-9]*\z/ }, uniqueness: true
   validates :template, :model_id, presence: true
@@ -11,5 +14,13 @@ class PromptVersion < ApplicationRecord
 
   def readonly?
     persisted? || super
+  end
+
+  def regression_contract
+    attributes.slice(*PromptRegistry::FIELDS)
+  end
+
+  def regression_sha256
+    Digest::SHA256.hexdigest(JSON.generate(regression_contract.sort.to_h))
   end
 end

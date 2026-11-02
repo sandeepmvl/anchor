@@ -1,0 +1,22 @@
+description: Anchor offline prompt regression replay
+prompts:
+  - '{{query}}'
+providers:
+  - id: file://regression_provider.py
+    label: chat:v1
+    config:
+      tag: chat:v1
+  - id: file://regression_provider.py
+    label: chat:v2
+    config:
+      tag: chat:v2
+      regressed: true
+tests: file://regression_provider.py:get_tests
+defaultTest:
+  assert:
+    - type: contains
+      value: '30 days'
+    - type: regex
+      value: '(?i)original payment method'
+    - type: python
+      value: "file://regression_assertions.py:rubric_assert"

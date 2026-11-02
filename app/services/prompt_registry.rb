@@ -50,4 +50,22 @@ class PromptRegistry
   def self.active_reply
     resolve(ENV.fetch('ANCHOR_REPLY_PROMPT_VERSION', 'chat:v3'))
   end
+
+  # This public export deliberately has no tenant-private export capability.
+  def self.export_regression(tags:)
+    unless tags == %w[chat:v1 chat:v2]
+      raise SecurityError, 'Only the public regression pair may be exported'
+    end
+    tags.map do |tag|
+      expected = INITIAL_VERSIONS.fetch(tag).stringify_keys.merge('version' => tag)
+      existing = PromptVersion.find_by(version: tag)
+      if existing && existing.regression_contract != expected
+        raise SecurityError, 'Stored contract is not the public built-in contract'
+      end
+      resolve(tag)
+      row = PromptVersion.find_by!(version: tag)
+      { 'tag' => tag, 'version_id' => row.id.to_s,
+        'sha256' => row.regression_sha256, 'contract' => row.regression_contract }
+    end
+  end
 end

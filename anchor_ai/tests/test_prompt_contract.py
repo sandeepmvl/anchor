@@ -122,3 +122,19 @@ def test_registry_export_demo(monkeypatch):
             max_tokens=trace['max_tokens'])))
     assert [item['version'] for item in contracts] == ['chat:v1', 'chat:v2']
     print('PASS: same ticket, two pinned contracts; buffered and streaming settings match')
+
+
+def test_regression_adapter_preserves_existing_contract():
+    from eval.regression_provider import fixture_input, ReplayClient
+    source = fixture_input()
+    for exported in source['prompts']:
+        values = exported['contract']
+        contract = PromptContract.model_validate(values)
+        assert request(values).prompt_contract == contract
+        rendered = render_chat(contract, TICKET)
+        assert TICKET in rendered
+        assert '{{ticket}}' not in rendered
+        answer = ReplayClient().complete(values,
+            {'id': 'refund-01', 'query': TICKET})
+        assert isinstance(answer['text'], str)
+        assert values['model_id'] == 'gpt-4.1-2025-04-14'

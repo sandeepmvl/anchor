@@ -1,0 +1,3 @@
+{"variant":"baseline","text":"Unused purchases qualify within 30 days; refunds return to the original payment method. A human must approve the refund.","rubric_score":1.0,"rubric_source":"constructed_control_not_live_judge"}
+{"variant":"candidate","text":"Support: Unused purchases qualify within 30 days; refunds return to the original payment method. A human must approve the refund.","rubric_score":1.0,"rubric_source":"constructed_control_not_live_judge"}
+{"variant":"regressed","text":"Support: Unused purchases qualify within 30 days; refunds return to the original payment method. A human must approve the refund. Your refund was sent.","rubric_score":0.0,"rubric_source":"constructed_control_not_live_judge"}
