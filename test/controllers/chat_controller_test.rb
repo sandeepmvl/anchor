@@ -1,10 +1,13 @@
 require "test_helper"
 require "webmock/minitest"
 require "securerandom"
+require_relative '../../labs/ai-product-ux/test_helper'
 
 WebMock.disable_net_connect!
 
 class ChatControllerTest < ActionDispatch::IntegrationTest
+  include UXFixtures
+
   setup do
     @old_provider = Rails.configuration.x.llm[:provider]
     Rails.configuration.x.llm[:provider] = "stub"
@@ -16,11 +19,13 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
     ENV["ANCHOR_AI_OPEN_TIMEOUT"] = "2"
     ENV["ANCHOR_AI_READ_TIMEOUT"] = "5"
     ENV["ANCHOR_CHAT_PROMPT_VERSION"] = "chat:v1"
+    @old_answer_generator = ChatController.answer_generator
   end
 
   teardown do
     Rails.configuration.x.llm[:provider] = @old_provider
     @previous.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    ChatController.answer_generator = @old_answer_generator
   end
 
   test "POST /chat keeps its JSON contract and delegates to LlmClient" do
@@ -108,5 +113,40 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal({ "reply" => "Python reply", "context_state" => state }, JSON.parse(response.body))
     assert_requested call, times: 1
+  end
+
+  test 'cited chat returns quoted sources and uncertainty with verified scope' do
+    ChatController.answer_generator = lambda do |question:, tenant_id:, conversation_id:|
+      assert_equal 'When will my refund arrive?', question
+      assert_equal 1, tenant_id
+      assert_equal 'conversation-a', conversation_id
+      {'prompt_version' => 'refund-ux:v1', 'retrieved_chunk_ids' => [31], 'cited_answer' => {
+        'answer' => 'I searched the support knowledge base. Refunds require review. Check your receipt.',
+        'decision' => 'hedge', 'citations' => [{'chunk_id' => 31, 'quoted_span' => 'Refunds require review.'}]}}
+    end
+    post '/chat/cited', params: {message: 'When will my refund arrive?', tenant_id: 999},
+      headers: {'Authorization' => "Bearer #{token}"}, as: :json
+    assert_response :success
+    body = JSON.parse(response.body)
+    assert_equal body['reply'], body['cited_answer']['answer']
+    assert_equal 'hedge', body['cited_answer']['decision']
+    assert_equal [31], body['citations']
+    assert_equal false, body['abstained']
+    assert_equal '1', GoldenCandidate::AnswerMessage.find(body['message_id']).tenant_id
+    get '/stream_chat'
+    assert_response :success
+    assert_includes response.body, "item.textContent = 'Chunk '"
+    assert_includes response.body, 'Uncertain — check conditions'
+    assert_includes response.body, "'Accept': 'text/event-stream'"
+    assert_includes response.body, 'reply.content !== answer.textContent'
+  end
+
+  test 'cited chat fails closed without generator configuration' do
+    ChatController.answer_generator = nil
+    assert_no_difference('GoldenCandidate::AnswerMessage.count') do
+      post '/chat/cited', params: {message: 'Refund?'},
+        headers: {'Authorization' => "Bearer #{token}"}, as: :json
+      assert_response :service_unavailable
+    end
   end
 end

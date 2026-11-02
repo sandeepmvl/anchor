@@ -369,3 +369,29 @@ def published_query_engine_tool(retriever, tenant_id, client=None, **options):
         from anchor_ai.llm_client import LlmClient
         client = ExistingClientAdapter(LlmClient())
     return QueryEngineTool(retriever, tenant_id, client, **options)
+
+
+class CitedRagRuntime:
+    """Opt-in composition; legacy runtime response contracts are unchanged."""
+    def __init__(self, tenant_id, retriever, policy, prompt_version):
+        if not isinstance(prompt_version, str) or not prompt_version:
+            raise ValueError('prompt_version_required')
+        self.tenant_id = tenant_id
+        self.retriever = retriever
+        self.policy = policy
+        self.prompt_version = prompt_version
+
+    async def answer(self, question, top_k=3):
+        if not question.strip() or len(question.encode('utf-8')) > 1800:
+            raise ValueError('current_question_budget_exceeded')
+        retrieved = await self.retriever.retrieve(question, top_k)
+        if retrieved['tenant_id'] != self.tenant_id:
+            raise ValueError('runtime_scope_mismatch')
+        hits = retrieved['hits']
+        # Use the retriever's existing score, never model-stated confidence.
+        top_score = hits[0].get('score') if hits else None
+        answer = await self.policy.generate(question, tenant_id=self.tenant_id,
+                                            hits=hits, top_score=top_score)
+        return dict(cited_answer=answer, prompt_version=self.prompt_version,
+                    retrieved_chunk_ids=[hit['id'] for hit in hits
+                                         if hit.get('tenant_id') == self.tenant_id])

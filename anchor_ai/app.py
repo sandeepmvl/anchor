@@ -484,3 +484,36 @@ async def multi_agent(
         raise HTTPException(status_code=403, detail='execution_context_rejected') from None
     except ValueError:
         raise HTTPException(status_code=422, detail='agent_request_rejected') from None
+
+
+from anchor_ai.schemas import CitedRagEnvelope
+
+
+@app.post('/v1/rag/cited', response_model=CitedRagEnvelope)
+async def cited_rag(
+    body: DenseRagRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    factory = getattr(app.state, 'cited_rag_runtime_factory', None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail='cited_generation_not_configured')
+    try:
+        runtime = factory(tenant_id=body.tenant_id)
+        if runtime.tenant_id != body.tenant_id:
+            raise ValueError('runtime_scope_mismatch')
+        item.set(stage='retrieval')
+        return await runtime.answer(body.message)
+    except ProviderError as error:
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail='retrieval_deadline') from None
+    except ValueError:
+        raise HTTPException(status_code=422, detail='cited_generation_rejected') from None

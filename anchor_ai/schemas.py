@@ -290,3 +290,14 @@ class AccountExecutionScope(BaseModel):
     conversation_id: int = Field(gt=0)
     customer_id: str = Field(min_length=1, max_length=100)
     role: str = Field(min_length=1, max_length=100)
+
+
+from anchor_ai.answer_policy import Citation, CitedAnswer, CITED_FORMAT
+
+
+class CitedRagEnvelope(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    # AnswerPolicy already performed contextual validation against pinned evidence.
+    cited_answer: dict[str, JsonValue]
+    retrieved_chunk_ids: list[int]
+    prompt_version: str = Field(min_length=1, max_length=100)

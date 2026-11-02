@@ -1,7 +1,9 @@
 class ChatController < ApplicationController
   include ActionController::Live
-  # The original JSON endpoint has no cookie-based authentication.
-  skip_forgery_protection unless: :stream_request?
+  protect_from_forgery with: :exception
+  # Only the original non-streaming JSON endpoint is exempt from CSRF.
+  skip_forgery_protection if: -> { action_name == 'create' && !stream_request? }
+  class_attribute :answer_generator, default: nil
 
   class ProtocolError < StandardError; end
 
@@ -60,6 +62,42 @@ class ChatController < ApplicationController
     render json: { error: 'unknown_prompt_version' }, status: :unprocessable_entity
   ensure
     response.stream.close if stream_request?
+  end
+
+  def cited
+    token = session[:anchor_customer_context].presence || request.authorization.to_s.delete_prefix('Bearer ')
+    claims = GoldenCandidate.claims!(token, purpose: 'answer_customer')
+    unless answer_generator.respond_to?(:call)
+      return render json: {error: 'generation_unavailable'}, status: :service_unavailable
+    end
+    question = params.require(:message).to_s
+    raise GoldenCandidate::InvalidInput if question.empty? || question.bytesize > 1800
+    result = answer_generator.call(question: question,
+      tenant_id: claims.fetch('tenant_id').to_i,
+      conversation_id: claims.fetch('conversation_id'))
+    answer = result.fetch('cited_answer')
+    ids = result.fetch('retrieved_chunk_ids')
+    version = result.fetch('prompt_version')
+    unless answer.is_a?(Hash) && %w[answer hedge refuse].include?(answer['decision']) &&
+        answer['answer'].is_a?(String) && answer['answer'].length.between?(1, 4000) &&
+        answer['citations'].is_a?(Array) && ids.is_a?(Array) &&
+        ids.all? { |id| id.is_a?(Integer) && id.positive? } &&
+        version.is_a?(String) && version.match?(/\A[a-zA-Z0-9_:.-]{1,100}\z/) &&
+        answer['citations'].all? { |c| c.is_a?(Hash) && ids.include?(c['chunk_id']) &&
+          c['quoted_span'].is_a?(String) && c['quoted_span'].present? } &&
+        (answer['decision'] == 'refuse' ? answer['citations'].empty? : answer['citations'].any?)
+      raise GoldenCandidate::InvalidInput
+    end
+    safe = GoldenCandidate.safe!({'question' => question, 'cited_answer' => answer})
+    stored = GoldenCandidate::AnswerMessage.create!(tenant_id: claims.fetch('tenant_id').to_s,
+      customer_id: claims.fetch('subject'), conversation_id: claims.fetch('conversation_id'),
+      prompt_version: version, retrieved_chunk_ids: ids, payload: safe)
+    render json: {reply: answer.fetch('answer'), citations: answer.fetch('citations').map { |c| c.fetch('chunk_id') },
+      abstained: answer.fetch('decision') == 'refuse', cited_answer: answer, message_id: stored.id}
+  rescue GoldenCandidate::AuthorizationError
+    head :unauthorized
+  rescue GoldenCandidate::InvalidInput, KeyError, TypeError
+    render json: {error: 'answer_rejected'}, status: :unprocessable_entity
   end
 
   private

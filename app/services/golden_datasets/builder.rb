@@ -71,5 +71,10 @@ module GoldenDatasets
       row.update!(payload: row.payload.merge('status' => 'deprecated', 'review_status' => 'deprecated',
         'labeler' => reviewer, 'deprecated_at' => Time.now.utc.iso8601, 'needs_review' => false))
     end
+
+    def promote_candidate!(candidate_id:, corrected:, token:)
+      GoldenCandidate.find_by!(id: candidate_id, tenant_id: @tenant)
+      CandidateReviewer.new(token: token).promote!(candidate_id: candidate_id, corrected: corrected)
+    end
   end
 end

@@ -38,4 +38,12 @@ namespace :golden do
       puts JSON.generate(row.slice('tenant_id', 'source_run_id', 'provenance', 'query'))
     end
   end
+
+  task :promote_candidate, [:id, :correction] => :environment do |_task, args|
+    abort 'candidate id and corrected example JSON required' unless args[:id] && args[:correction]
+    token = ENV.fetch('ANCHOR_GOLDEN_REVIEW_CONTEXT')
+    draft = GoldenDatasets::CandidateReviewer.new(token: token).promote!(
+      candidate_id: args[:id], corrected: JSON.parse(File.read(args[:correction])))
+    puts "Staged #{draft.key} as a pending draft; published snapshots unchanged"
+  end
 end

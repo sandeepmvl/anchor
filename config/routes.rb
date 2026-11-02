@@ -11,4 +11,6 @@ Rails.application.routes.draw do
   get "/api/document_chunks", to: "api/document_chunks#index"
   post "/api/agent_memories", to: "api/agent_memories#create"
   get "/api/agent_memories", to: "api/agent_memories#index"
+  post "/chat/cited", to: "chat#cited"
+  post "/api/answer_feedback", to: "api/answer_feedback#create"
 end

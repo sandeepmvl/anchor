@@ -8,22 +8,45 @@
 <p id="state" role="status">Ready</p>
 <pre id="answer" style="white-space: pre-wrap"></pre>
 <ul id="citations" aria-label="Citations"></ul>
+<form id="feedback-form" hidden>
+  <label>What was wrong? <input id="feedback-comment" maxlength="2000"></label>
+  <button type="submit">Thumbs down</button>
+  <span id="feedback-state" role="status"></span>
+</form>
 <script>
 (() => {
   const find = id => document.getElementById(id);
   const state = find('state'), answer = find('answer'), citations = find('citations');
   const send = find('send'), stop = find('stop');
   const csrf = () => document.querySelector('meta[name="csrf-token"]').content;
+  const citedMode = <%= GoldenCandidate.verifier.verified(session[:anchor_customer_context].to_s, purpose: 'answer_customer').present? ? 'true' : 'false' %>;
+  let messageId;
   let aborter;
   const interrupted = message => {
     state.textContent = message + ' Partial text is unconfirmed. Retry starts a new request.';
     citations.replaceChildren();
   };
+  find('feedback-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!messageId) return;
+    try {
+      const response = await fetch('/api/answer_feedback', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf()},
+        body: JSON.stringify({message_id: messageId, rating: 'down', comment: find('feedback-comment').value})
+      });
+      if (!response.ok) throw new Error('Feedback was not saved. Please retry.');
+      find('feedback-state').textContent = 'Saved for review, not added to the golden dataset.';
+    } catch (error) { find('feedback-state').textContent = error.message; }
+  });
   find('chat-form').addEventListener('submit', async event => {
     event.preventDefault();
     aborter = new AbortController();
     answer.textContent = '';
     citations.replaceChildren();
+    messageId = undefined;
+    find('feedback-form').hidden = true;
+    find('feedback-state').textContent = '';
     send.disabled = true;
     stop.disabled = false;
     state.textContent = 'Drafting — partial output';
@@ -59,6 +82,27 @@
       } else throw new Error('Unknown stream event');
     }
     try {
+      if (citedMode) {
+        state.textContent = 'Searching support knowledge base';
+        const response = await fetch('/chat/cited', {
+          method: 'POST', credentials: 'same-origin', signal: aborter.signal,
+          headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-Token': csrf()},
+          body: JSON.stringify({message: find('message').value})
+        });
+        if (!response.ok) throw new Error('Chat HTTP ' + response.status);
+        const result = await response.json(), reply = result.cited_answer;
+        if (!reply || !['answer', 'hedge', 'refuse'].includes(reply.decision)) throw new Error('Invalid answer');
+        answer.textContent = reply.answer;
+        state.textContent = {answer: 'Supported answer', hedge: 'Uncertain — check conditions', refuse: 'No supporting answer found'}[reply.decision];
+        for (const citation of reply.citations) {
+          const item = document.createElement('li');
+          item.textContent = 'Chunk ' + citation.chunk_id + ': “' + citation.quoted_span + '”';
+          citations.append(item);
+        }
+        messageId = result.message_id;
+        find('feedback-form').hidden = false;
+        return;
+      }
       const response = await fetch('/chat', {
         method: 'POST', credentials: 'same-origin', signal: aborter.signal,
         headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream',
