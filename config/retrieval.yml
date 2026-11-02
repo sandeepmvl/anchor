@@ -60,3 +60,10 @@ maintenance:
   chunker_version: sentence-v1
   rollback_policy: refresh_all_retained_ready_generations
   embedding_provider_env: ANCHOR_EMBEDDING_PROVIDER
+
+chat:
+  enabled_tenant_ids: []
+  fixture_tenant_id: 1
+  fixture_conversation_id: 10
+  fixture_env: ANCHOR_DENSE_FIXTURE
+  url: http://127.0.0.1:8000/v1/dense_rag

@@ -83,3 +83,17 @@ class IngestionNode(BaseModel):
         elif self.parent_index is not None or self.embedding is not None or any(metadata):
             raise ValueError('invalid_parent')
         return self
+
+
+class DenseRagRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    message: str = Field(min_length=1, max_length=1800)
+
+
+class DenseRagResponse(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    reply: str = Field(min_length=1, max_length=4000)
+    citations: list[int]
+    abstained: bool

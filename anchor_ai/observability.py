@@ -144,3 +144,17 @@ def span(name, ctx=None, **fields):
     finally:
         CURRENT.reset(token)
         item.finish()
+
+
+RETRIEVAL_FIELDS = {'generation_id', 'embedding_model', 'embedding_revision',
+                    'metric', 'k', 'overfetch', 'post_filter_count', 'filter_path',
+                    'chunk_ids', 'scores', 'embedding_ms', 'search_ms', 'fallback_ms',
+                    'evidence_chunk_ids', 'evidence_bytes', 'citations', 'abstained',
+                    'generation_ms'}
+FIELDS.update(RETRIEVAL_FIELDS)
+ERRORS.update({'ingestion_failed', 'retrieval_not_configured', 'retrieval_failed'})
+
+
+def emit_retrieval(record):
+    with span('python.dense_rag', stage='retrieval') as item:
+        item.set(**{key: record[key] for key in RETRIEVAL_FIELDS if key in record})

@@ -9,7 +9,10 @@ class AiTelemetry
     provider_bad_request provider_auth_failed provider_forbidden provider_not_found
     provider_quota_exhausted provider_rate_limited provider_unknown_429 provider_unavailable
     provider_transport_error provider_timeout invalid_provider_response missing_provider_key
-    invalid_provider_mode provider_rejected internal_error].freeze
+    invalid_provider_mode provider_rejected internal_error
+    trusted_context_required retrieval_upstream_failed invalid_retrieval_response
+    invalid_retrieval_url retrieval_secret_required invalid_request_id
+    invalid_traceparent retrieval_stream_not_supported].freeze
 
   class << self
     attr_writer :sink

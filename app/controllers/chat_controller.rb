@@ -20,6 +20,18 @@ class ChatController < ApplicationController
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
+      retrieval = retrieval_settings
+      if retrieval
+        if stream_request?
+          render json: { error: 'retrieval_stream_not_supported' }, status: :unprocessable_entity
+          return
+        end
+        trusted, settings = retrieval
+        result = LlmClient.new.complete_retrieval(message, context: trusted,
+          url: settings.fetch('url'), secret: ENV['ANCHOR_AI_SECRET'])
+        render json: result
+        return
+      end
       config = YAML.safe_load(ERB.new(Rails.root.join('config/llm.yml').read).result).fetch('shared')
       selector = params.fetch(:prompt_version, config.fetch('default_prompt_version'))
       contract = PromptRegistry.resolve(selector)
@@ -51,6 +63,31 @@ class ChatController < ApplicationController
   end
 
   private
+
+  def retrieval_settings
+    settings = YAML.safe_load(Rails.root.join('config/retrieval.yml').read).fetch('chat')
+    fixture = !Rails.env.production? && ENV[settings.fetch('fixture_env')] == '1'
+    trusted = request.env['anchor.trusted_retrieval_context']
+    if fixture
+      trusted = RetrievalClient::TrustedContext.new(
+        tenant_id: settings.fetch('fixture_tenant_id'),
+        conversation_id: settings.fetch('fixture_conversation_id'))
+    end
+    enabled = settings.fetch('enabled_tenant_ids')
+    unless fixture
+      if trusted.nil?
+        if enabled.any?
+          raise LlmClient::BoundaryError.new('trusted_context_required', 422)
+        end
+        return nil
+      end
+      unless trusted.is_a?(RetrievalClient::TrustedContext)
+        raise LlmClient::BoundaryError.new('trusted_context_required', 422)
+      end
+      return nil unless enabled.include?(trusted.tenant_id)
+    end
+    [trusted, settings]
+  end
 
   def relay(message)
     buffer = +''.b

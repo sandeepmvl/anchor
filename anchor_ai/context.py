@@ -213,3 +213,17 @@ def attach_context(request):
         value.context_options = (request.history or [], request.summary_state)
         request.message = value
     return request
+
+
+def pack_retrieved_evidence(hits, budget_bytes=600):
+    envelope = {'label': 'UNTRUSTED_EVIDENCE', 'sources': []}
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False).encode('utf-8'))
+    if type(budget_bytes) is not int or size(envelope) > budget_bytes:
+        raise ContextError('evidence envelope exceeds its allocation')
+    for hit in hits:
+        candidate = {'label': envelope['label'], 'sources': envelope['sources'] + [
+            {'id': hit['id'], 'text': hit['text']}]}
+        if size(candidate) <= budget_bytes:
+            envelope = candidate
+    return envelope

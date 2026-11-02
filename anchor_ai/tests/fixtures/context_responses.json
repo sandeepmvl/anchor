@@ -3,5 +3,7 @@
   "summary_with_commitment": "Mira committed to sending the receipt Friday. Receipt review remains open.",
   "summary_without_commitment": "The customer is reviewing purchase records. Keep the receipt ticket open.",
   "reply_with_commitment": "You committed to sending the receipt Friday.",
-  "reply_without_commitment": "I can help review your receipt ticket."
+  "reply_without_commitment": "I can help review your receipt ticket.",
+  "dense_refund_reply": "Refunds require review. Contact support with your receipt to request a refund.",
+  "dense_abstention": "I could not find a supporting policy in your documents."
 }

@@ -57,6 +57,18 @@ class LlmClient
     end
   end
 
+  def complete_retrieval(message, context:, url:, secret:, transport: nil)
+    AiTelemetry.span('rails.retrieval_call', stage: 'retrieval',
+      tenant_id: context&.tenant_id, conversation_id: context&.conversation_id) do |span|
+      client = RetrievalClient.new(context: context, url: url, secret: secret, transport: transport)
+      headers = span.headers
+      client.complete(message, request_id: headers.fetch('X-Request-Id'),
+        traceparent: headers.fetch('traceparent'))
+    end
+  rescue RetrievalClient::Error => error
+    raise BoundaryError.new(error.message, 502)
+  end
+
   def stream(message, contract: nil)
     contract ||= message.prompt_contract if message.respond_to?(:prompt_contract)
     AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
