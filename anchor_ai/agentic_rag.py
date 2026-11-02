@@ -7,6 +7,8 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
+from anchor_ai.autonomy import run_for
+from anchor_ai.contracts import ToolScope
 from anchor_ai.observability import AGENT_SUMMARIES, span
 from anchor_ai.prompts import AGENTIC_RAG_INSTRUCTION
 from anchor_ai.schemas import AgentDecision, RetrieveArguments
@@ -167,7 +169,7 @@ class AgenticRuntime:
         return min(value, configured)
 
     async def answer(self, question, k=3, *, request_id, trace_id,
-                     conversation_seen_ids=()):
+                     conversation_seen_ids=(), execution_scope=None, execution_run=None):
         if not isinstance(question, str) or not question.strip() or len(question.encode('utf-8')) > 1800:
             raise ValueError('current_question_budget_exceeded')
         if type(k) is not int or not 1 <= k <= 20:
@@ -178,6 +180,10 @@ class AgenticRuntime:
             raise ValueError('invalid_conversation_seen_ids')
         if history and self.tool.generation_id is None:
             raise ValueError('agent_scope_mismatch')
+        scope = execution_scope or ToolScope(tenant_id=self.tool.tenant_id, conversation_id=1)
+        if scope.tenant_id != self.tool.tenant_id:
+            raise ValueError('agent_scope_mismatch')
+        state = run_for(scope, execution_run)
         seen_ids, seen_queries = set(history), set()
         evidence, calls = {}, 0
         self.last_trajectory = []
@@ -185,6 +191,7 @@ class AgenticRuntime:
         with span('python.agent', ctx=ctx, stage='agent',
                   tenant_id=self.tool.tenant_id, agent_mode=self.mode) as root:
             def finish(reason, answer=None):
+                state.halted = True
                 result = answer or {'reply': ABSTENTION, 'citations': [], 'abstained': True}
                 root.set(agent_exit=reason, tool_calls=calls,
                          evidence_chunk_ids=sorted(evidence), seen_chunk_ids=sorted(seen_ids),
@@ -196,6 +203,9 @@ class AgenticRuntime:
                 return result
 
             for iteration in range(1, self.max_iterations + 1):
+                reason = await state.step(scope)
+                if reason:
+                    return finish(reason)
                 with span('python.agent.model', stage='llm', agent_iteration=iteration,
                           iterations_remaining=self.max_iterations - iteration,
                           tool_calls_remaining=self.max_tool_calls - calls,
@@ -240,6 +250,9 @@ class AgenticRuntime:
                 if record['duplicate_query']:
                     return finish('duplicate_query')
                 seen_queries.add(normalized)
+                reason, _ = await state.admit(scope, 'retrieve', decision.arguments.model_dump())
+                if reason:
+                    return finish(reason)
                 calls += 1
                 with span('python.agent.tool', stage='tool', tool_name='retrieve',
                           query_fingerprint=fingerprint, tool_calls=calls) as tool_span:

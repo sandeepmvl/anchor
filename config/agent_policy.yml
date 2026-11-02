@@ -1,0 +1,28 @@
+version: 1
+run:
+  max_steps: 12
+  max_calls: 8
+  max_cost_units: 16
+  deadline_seconds: 30
+tools:
+  retrieve: {mode: read, cost_units: 1}
+  lookup_order: {mode: read, cost_units: 1}
+  check_refund: {mode: read, cost_units: 1}
+  issue_refund: {mode: approval, cost_units: 3}
+tenants:
+  1:
+    refund_ceiling_cents: 500
+    roles:
+      support_reader: [retrieve, lookup_order, check_refund]
+      support_supervisor: [retrieve, lookup_order, check_refund, issue_refund]
+  2:
+    refund_ceiling_cents: 200
+    roles:
+      support_reader: [retrieve, lookup_order, check_refund]
+      support_supervisor: [retrieve, lookup_order, check_refund]
+# Unknown tenants, roles, and tool names fail closed.
+# Confirmation comes from trusted application code, never model arguments.
+# Budgets belong to one run and are shared by parallel dispatches.
+# Reservations are not refunded after backend errors.
+# A production financial adapter must persist idempotency records.
+# Monetary model-provider accounting is outside this fixture policy.

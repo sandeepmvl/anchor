@@ -143,3 +143,100 @@ def test_spans_link_model_tool_and_retrieval_without_raw_queries(recording, span
     assert root['agent_exit'] == 'no_new_evidence'
     assert len(tools[0]['query_fingerprint']) == 64
     assert 'refund policy' not in json.dumps(spans)
+
+
+from anchor_ai.autonomy import ExecutionRun
+from anchor_ai.contracts import ToolCall, ToolScope
+from anchor_ai.tools import MemoryOrderBackend, dispatch, dispatch_batch, registry_for
+
+
+def refund_call(amount=100, call_id='refund'):
+    return ToolCall(call_id=call_id, name='issue_refund',
+                    arguments={'order_id': 'A100', 'amount_cents': amount})
+
+
+def approve_refund(state, scope, call, key='refund-intent-001'):
+    token = state.confirm(scope, call, call.arguments)
+    state.approve(scope, call, call.arguments, confirmation=token, idempotency_key=key)
+    return token
+
+
+def test_consequential_tool_requires_confirmation():
+    async def scenario():
+        backend = MemoryOrderBackend()
+        scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+        result = await dispatch(refund_call(), registry_for(backend), scope)
+        assert result['payload']['error'] == 'confirmation_required'
+        assert backend.invocations == backend.refunds == []
+    asyncio.run(scenario())
+
+
+def test_confirmation_is_argument_bound_and_key_required():
+    async def scenario():
+        backend = MemoryOrderBackend()
+        scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+        state = ExecutionRun(scope)
+        call = refund_call()
+        token = state.confirm(scope, call, call.arguments)
+        with pytest.raises(ValueError, match='invalid_confirmation'):
+            state.approve(scope, call, call.arguments, confirmation=token, idempotency_key='')
+        with pytest.raises(ValueError, match='invalid_confirmation'):
+            changed = refund_call(101)
+            state.approve(scope, changed, changed.arguments,
+                          confirmation=token, idempotency_key='refund-intent-001')
+        approve_refund(state, scope, call)
+        result = await dispatch(refund_call(101), registry_for(backend), scope, run=state)
+        assert result['payload']['error'] == 'confirmation_required'
+        assert backend.invocations == backend.refunds == []
+    asyncio.run(scenario())
+
+
+def test_confirmed_parallel_retries_are_idempotent():
+    async def scenario():
+        backend = MemoryOrderBackend()
+        scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+        state = ExecutionRun(scope)
+        approve_refund(state, scope, refund_call())
+        results = await dispatch_batch([refund_call(call_id='a'), refund_call(call_id='b')],
+                                       registry_for(backend), scope, run=state)
+        assert all(r['payload']['ok'] for r in results)
+        assert len(backend.refunds) == len(backend.invocations) == 1
+        assert state.cost == 6
+    asyncio.run(scenario())
+
+
+def test_refund_dry_run_has_no_mutation():
+    async def scenario():
+        backend = MemoryOrderBackend()
+        scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+        state = ExecutionRun(scope, dry_run=True)
+        result = await dispatch(refund_call(), registry_for(backend), scope, run=state)
+        assert result['payload']['ok'] is True
+        assert result['payload']['data'] == {
+            'dry_run': True, 'proposed_action': 'issue_refund',
+            'arguments': {'order_id': 'A100', 'amount_cents': 100}}
+        assert backend.invocations == backend.refunds == []
+        assert backend.idempotency == {}
+        print('Can I refund order A100? Anchor: Proposed refund of 100 cents; dry-run only.')
+        print(json.dumps(result['payload']), 'financial_mutations=0')
+    asyncio.run(scenario())
+
+
+def test_retrieval_uses_shared_execution_budget(recording):
+    async def scenario():
+        retriever = RecordedRetrievalBoundary(recording)
+        scope = ToolScope(tenant_id=recording['tenant_id'], conversation_id=7)
+        state = ExecutionRun(scope, max_calls=1)
+        events = []
+        runtime = AgenticRuntime(retriever,
+                                policy=Policy(recording['trajectories']['productive']),
+                                emit=events.append,
+                                generation_id=recording['generation_id'])
+        answer = await runtime.answer(recording['question'], request_id='shared-budget',
+                                      trace_id='b' * 32, execution_scope=scope,
+                                      execution_run=state)
+        assert len(retriever.calls) == 1
+        assert events[-1]['exit'] == 'call_budget'
+        assert state.halted
+        assert_safe(answer)
+    asyncio.run(scenario())

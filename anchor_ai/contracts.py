@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator, model_serializer
 
 ReasoningEffort = Literal['off', 'low', 'high']
 
@@ -138,6 +138,9 @@ class ToolScope(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     tenant_id: int = Field(gt=0)
     conversation_id: int = Field(gt=0)
+    role: str = Field(default='support_reader', min_length=1)
+    # One scope represents one execution run. Never deserialize this private state.
+    _execution: dict = PrivateAttr(default_factory=dict)
 
 
 class ToolCall(BaseModel):
@@ -145,3 +148,16 @@ class ToolCall(BaseModel):
     call_id: str = Field(min_length=1, max_length=200)
     name: str = Field(min_length=1, max_length=200)
     arguments: str | dict
+
+
+class RefundArguments(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    order_id: str = Field(pattern=r'^[A-Z][0-9]{3}$')
+    amount_cents: int = Field(gt=0, le=1000000)
+
+
+class IssuedRefundResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    order_id: str = Field(pattern=r'^[A-Z][0-9]{3}$')
+    amount_cents: int = Field(gt=0)
+    status: Literal['refunded']

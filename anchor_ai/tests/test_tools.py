@@ -15,6 +15,13 @@ from anchor_ai.tools import (
 SCOPE = ToolScope(tenant_id=1, conversation_id=7)
 
 
+@pytest.fixture(autouse=True)
+def fresh_execution_scope(monkeypatch):
+    # A terminal run must never leak into a different test's execution.
+    monkeypatch.setattr(__import__(__name__, fromlist=['SCOPE']), 'SCOPE',
+                        ToolScope(tenant_id=1, conversation_id=7))
+
+
 def call(call_id, name='lookup_order', arguments=None):
     return ToolCall(call_id=call_id, name=name,
                     arguments={'order_id': 'A100'} if arguments is None else arguments)
@@ -56,8 +63,8 @@ def test_concurrent_reverse_correlated_redacted(monkeypatch):
 
 
 @pytest.mark.parametrize('name,arguments,code', [
-    ('unknown@example.test', '{}', 'unknown_tool'),
-    ('lookup_order', '{', 'invalid_json'),
+    ('unknown@example.test', '{}', 'policy_denied'),
+    ('lookup_order', '{', 'invalid_arguments'),
     ('lookup_order', '{"order_id":7}', 'invalid_arguments'),
     ('lookup_order', '{"order_id":" "}', 'invalid_arguments'),
     ('lookup_order', '[]', 'invalid_arguments'),
@@ -72,7 +79,11 @@ def test_rejected_before_backend(name, arguments, code, monkeypatch):
         [call('bad_1', name, arguments)], registry_for(backend), SCOPE))
     assert result == [{'call_id': 'bad_1', 'payload': {'ok': False, 'error': code}}]
     assert backend.invocations == []
-    assert records[0]['error_type'] == code
+    # Telemetry keeps its existing bounded error vocabulary.
+    expected_error = 'internal_error' if code == 'policy_denied' else code
+    assert records[0]['error_type'] == expected_error
+    event = SCOPE._execution['run'].events[-1]
+    assert event['event'] == 'policy_denied' and event['reason'] == code
     assert 'unknown@example.test' not in json.dumps(records)
     assert 'arguments' not in records[0]
     print(code, 'rejected; backend invocations = 0')
@@ -136,7 +147,9 @@ def test_three_provider_envelopes():
         raw = normalized[0].arguments
         assert (json.loads(raw) if isinstance(raw, str) else raw) == json.loads(arguments)
         registry = registry_for(MemoryOrderBackend())
-        results = asyncio.run(dispatch_batch(normalized, registry, SCOPE))
+        scope = ToolScope(tenant_id=1, conversation_id=7)
+        results = asyncio.run(dispatch_batch(normalized, registry, scope))
+        assert results[0]['payload']['ok'] is True
         messages = result_messages(api, results)
         if api == 'chat':
             assert messages[0]['tool_call_id'] == 'lookup_1'
@@ -144,7 +157,7 @@ def test_three_provider_envelopes():
             assert messages[0]['call_id'] == 'lookup_1'
         else:
             assert messages[0]['content'][0]['tool_use_id'] == 'lookup_1'
-        assert len(definitions(registry, api)) == 2
+        assert len(definitions(registry, api)) == 3
 
 
 def test_history_chain_errors_and_correction(monkeypatch):
@@ -152,18 +165,21 @@ def test_history_chain_errors_and_correction(monkeypatch):
     client = ToolReplayClient()
     backend = MemoryOrderBackend(reverse=True)
     history, batches = asyncio.run(run_conversation(client, registry_for(backend), SCOPE))
-    assert client.position == 5
-    assert [len(batch) for batch in batches] == [2, 1, 5, 1]
+    # The old correction turn is deliberately unreachable after policy denial.
+    assert client.position == 3
+    assert [len(batch) for batch in batches] == [2, 1, 5]
     assert batches[1][0]['call_id'] == 'chain_1'
     assert batches[1][0]['payload']['data']['order_id'] == batches[0][0]['payload']['data']['order_id']
-    assert [r['payload']['error'] for r in batches[2]] == [
-        'unknown_tool', 'invalid_json', 'invalid_arguments', 'invalid_arguments', 'execution_error']
-    assert batches[3][0]['payload']['ok'] is True
-    assert len(backend.invocations) == 5
-    assert 'eligible' in history[-1]['content']
+    assert batches[2][0]['payload'] == {'ok': False, 'error': 'policy_denied'}
+    assert all(r['payload']['ok'] is False for r in batches[2])
+    assert len(backend.invocations) == 3
+    assert SCOPE._execution['run'].halted is True
+    assert history[-1]['content'] == 'I cannot execute that action under this run policy.'
     assert 'alex@example.test' not in json.dumps(history)
     assert '[REDACTED]' in json.dumps(history)
     assert history[1]['tool_calls'][0]['id'] == 'lookup_1'
+    assert [m['tool_call_id'] for m in history if m['role'] == 'tool'] == [
+        r['call_id'] for batch in batches for r in batch]
 
 
 def test_missing_result_rejected_by_fake(monkeypatch):

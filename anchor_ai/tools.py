@@ -8,6 +8,8 @@ from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 from .contracts import ToolCall, ToolScope
+from .contracts import RefundArguments, IssuedRefundResult
+from .autonomy import guarded_dispatch, run_for
 from .schemas import OrderToolArguments, OrderToolResult, RefundToolResult
 from .observability import span, tool_span
 from .llm_client import LlmClient
@@ -19,6 +21,8 @@ class Tool:
     arguments: type[BaseModel]
     result: type[BaseModel]
     run: Callable
+    consequential: bool = False
+    authorize: Callable | None = None
 
 
 def normalize(api, response):
@@ -83,6 +87,9 @@ class MemoryOrderBackend:
                          'status': 'processing', 'customer_contact': '+1 202 555 0199',
                          'eligible': False},
         }
+        self.refunds = []
+        self.idempotency = {}
+        self.refund_lock = asyncio.Lock()
 
     async def _read(self, name, scope, order_id):
         self.invocations.append((name, scope.tenant_id, order_id))
@@ -107,13 +114,41 @@ class MemoryOrderBackend:
         return {'order_id': row['order_id'], 'eligible': row['eligible'],
                 'reason': 'within_window' if row['eligible'] else 'outside_window'}
 
+    def owns(self, scope, arguments):
+        return (scope.tenant_id, arguments['order_id']) in self.rows
+
+    async def issue_refund(self, *, scope, order_id, amount_cents, idempotency_key):
+        if not idempotency_key:
+            raise ValueError('idempotency_required')
+        async with self.refund_lock:
+            identity = (scope.tenant_id, idempotency_key)
+            bound = (order_id, amount_cents)
+            if identity in self.idempotency:
+                previous, result = self.idempotency[identity]
+                if previous != bound:
+                    raise ValueError('idempotency_conflict')
+                return dict(result)
+            row = self.rows[(scope.tenant_id, order_id)]
+            if not row['eligible']:
+                raise ValueError('refund_ineligible')
+            self.invocations.append(('issue_refund', scope.tenant_id, order_id))
+            result = {'order_id': order_id, 'amount_cents': amount_cents, 'status': 'refunded'}
+            self.refunds.append(dict(result))
+            self.idempotency[identity] = (bound, dict(result))
+            return result
+
 
 def registry_for(backend):
     return {
         'lookup_order': Tool('Read order details; does not change the order.',
-                             OrderToolArguments, OrderToolResult, backend.lookup_order),
+                             OrderToolArguments, OrderToolResult, backend.lookup_order,
+                             authorize=backend.owns),
         'check_refund': Tool('Read refund eligibility; never issue a refund.',
-                             OrderToolArguments, RefundToolResult, backend.check_refund),
+                             OrderToolArguments, RefundToolResult, backend.check_refund,
+                             authorize=backend.owns),
+        'issue_refund': Tool('Issue a refund only after trusted approval.',
+                             RefundArguments, IssuedRefundResult, backend.issue_refund,
+                             consequential=True, authorize=backend.owns),
     }
 
 
@@ -126,7 +161,7 @@ def safe_result(model):
     return data
 
 
-async def dispatch(call, registry, scope):
+async def _dispatch_validated(call, registry, scope, *, idempotency_key=None):
     with tool_span(scope, call) as operation:
         def failure(code):
             operation.fail(code)
@@ -144,7 +179,8 @@ async def dispatch(call, registry, scope):
         except ValidationError:
             return failure('invalid_arguments')
         try:
-            raw_result = await tool.run(scope=scope, **arguments.model_dump())
+            extra = {'idempotency_key': idempotency_key} if tool.consequential else {}
+            raw_result = await tool.run(scope=scope, **arguments.model_dump(), **extra)
             validated = tool.result.model_validate(raw_result)
             data = safe_result(validated)
         except Exception:
@@ -152,13 +188,19 @@ async def dispatch(call, registry, scope):
         return {'call_id': call.call_id, 'payload': {'ok': True, 'data': data}}
 
 
-async def dispatch_batch(calls, registry, scope):
+async def dispatch(call, registry, scope, *, run=None):
+    return await guarded_dispatch(call, registry, scope, _dispatch_validated, run)
+
+
+async def dispatch_batch(calls, registry, scope, *, run=None):
     ids = [call.call_id for call in calls]
     if len(ids) != len(set(ids)):
         raise ValueError('duplicate_call_id')
+    # One state is bound before gather; all tasks reserve against that state.
+    state = run_for(scope, run)
     # gather runs independent reads concurrently and retains input order.
     # Each result still carries its ID: no caller needs completion-order pairing.
-    return await asyncio.gather(*(dispatch(call, registry, scope) for call in calls))
+    return await asyncio.gather(*(dispatch(call, registry, scope, run=state) for call in calls))
 
 
 class ToolReplayClient(LlmClient):
@@ -203,20 +245,30 @@ class ToolReplayClient(LlmClient):
         return message
 
 
-async def run_conversation(client, registry, scope):
+async def run_conversation(client, registry, scope, *, run=None):
     history = [{'role': 'user', 'content': 'Can I refund order A100?'}]
     batches = []
+    state = run_for(scope, run)
     for _ in range(6):
+        reason = await state.step(scope)
+        if reason:
+            history.append({'role': 'assistant', 'content': 'I cannot continue: ' + reason})
+            return history, batches
         with span('python.tool_llm', stage='llm', tenant_id=scope.tenant_id,
                   conversation_id=scope.conversation_id):
             message = client.complete(history, system=definitions(registry))
         calls = normalize('chat', message)
         history.append(message)
         if not calls:
+            state.halted = True
             return history, batches
-        results = await dispatch_batch(calls, registry, scope)
+        results = await dispatch_batch(calls, registry, scope, run=state)
         history.extend(result_messages('chat', results))
         batches.append(results)
+        if state.halted:
+            history.append({'role': 'assistant', 'content': 'I cannot execute that action under this run policy.'})
+            return history, batches
+    state.halted = True
     raise RuntimeError('tool_turn_limit')
 
 
@@ -236,7 +288,8 @@ async def demo(reverse=False):
     print('COMPLETION ORDER', backend.completed[:2], 'max_active=', backend.max_active)
     print('CHAIN', json.dumps(batches[1]))
     print('ERRORS', json.dumps(batches[2]))
-    print('CORRECTION', json.dumps(batches[3]))
+    if len(batches) > 3:
+        print('CORRECTION', json.dumps(batches[3]))
     print('Anchor:', history[-1]['content'])
 
 
