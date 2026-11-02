@@ -276,6 +276,19 @@ class AiQuotaPolicy
         snapshot_in(db, tenant, window)
       end
     end
+    # A bounded-window anomaly signal, not a provider billing measurement.
+    # The baseline must use the same units and window length as this ledger.
+    def incident_signal(tenant:, baseline:)
+      unless baseline.is_a?(Numeric) && baseline.finite? && baseline.positive?
+        raise Denied, 'approved_baseline_required'
+      end
+      current = call('snapshot', tenant: tenant)
+      { 'kind' => 'cost_spike', 'ratio' => current.fetch('used').to_f / baseline,
+        'baseline' => baseline, 'used' => current.fetch('used'),
+        'window' => current.fetch('window'), 'window_seconds' => @seconds,
+        'source' => 'incident_admission_bound_not_billing' }
+    end
+
     def snapshot_in(db, tenant, window)
       tickets = db.execute('SELECT ticket,context,state,reason FROM incident_tickets WHERE tenant=? ORDER BY ticket', [tenant]).map do |row|
         { 'ticket' => row['ticket'], 'context' => JSON.parse(row['context']), 'state' => row['state'], 'reason' => row['reason'] }

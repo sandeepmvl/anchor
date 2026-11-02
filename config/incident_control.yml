@@ -2,6 +2,15 @@ version: 1
 scope: organization
 trigger: authenticated_admin_service_call
 reenable: explicit_admin_change_with_reason
+playbook:
+  severity_1_ratio: 10
+  severity_2_ratio: 3
+  human_banner_seconds: 60
+  recovery_observation_seconds: 300
+  alert_routes:
+    '1': [primary, backup]
+    '2': [primary]
+    '3': [owner]
 message: "Automatic processing is unavailable. Your ticket is being handed to a human; we will verify any pending refund before further action."
 # Stop acknowledgement waits for an admitted local critical section to finish.
 # It does not cancel a request already sent or reverse a committed refund.
@@ -9,3 +18,6 @@ message: "Automatic processing is unavailable. Your ticket is being handed to a 
 production_evidence:
   - ANCHOR_INCIDENT_COORDINATION_VERIFIED
   - ANCHOR_PAYMENT_IDEMPOTENCY_VERIFIED
+  - ANCHOR_INCIDENT_PAGING_VERIFIED
+  - ANCHOR_INCIDENT_HTTP_BANNER_VERIFIED
+  - ANCHOR_INCIDENT_RECOVERY_VERIFIED
