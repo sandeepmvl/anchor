@@ -1,7 +1,18 @@
 class ChatController < ApplicationController
-  # This initial endpoint has no cookie-based authentication.
-  # Revisit CSRF protection before adding session-cookie authentication.
-  skip_forgery_protection
+  include ActionController::Live
+  # The original JSON endpoint has no cookie-based authentication.
+  skip_forgery_protection unless: :stream_request?
+
+  class ProtocolError < StandardError; end
+
+  def show
+  end
+
+  def stream_request?
+    request.headers['Accept'].to_s.split(',').any? do |value|
+      value.strip.start_with?('text/event-stream')
+    end
+  end
 
   def create
     context = AiTelemetry.context(request_id: request.request_id,
@@ -9,8 +20,78 @@ class ChatController < ApplicationController
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
-      reply = LlmClient.new.complete(message)
-      render json: { reply: reply }
+      unless stream_request?
+        reply = LlmClient.new.complete(message)
+        render json: { reply: reply }
+        return
+      end
+      response.headers['Content-Type'] = 'text/event-stream; charset=utf-8'
+      response.headers['Cache-Control'] = 'no-cache'
+      response.headers['X-Accel-Buffering'] = 'no'
+      ActiveRecord::Base.connection_pool.release_connection
+      relay(message)
     end
+  ensure
+    response.stream.close if stream_request?
+  end
+
+  private
+
+  def relay(message)
+    buffer = +''.b
+    text = +''
+    terminal = false
+    LlmClient.new.stream(message) do |chunk|
+      buffer << chunk.b
+      raise ProtocolError if buffer.bytesize > 1_048_576
+      while (boundary = buffer.match(/\r?\n\r?\n/))
+        packet = buffer.slice!(0, boundary.end(0)).force_encoding(Encoding::UTF_8)
+        raise ProtocolError unless packet.valid_encoding?
+        if packet.start_with?(':')
+          response.stream.write(packet)
+          next
+        end
+        lines = packet.split(/\r?\n/)
+        name = lines.find { |line| line.start_with?('event:') }&.delete_prefix('event:')&.strip
+        data = lines.select { |line| line.start_with?('data:') }
+          .map { |line| line.delete_prefix('data:').delete_prefix(' ') }.join("\n")
+        case name
+        when 'token'
+          response.stream.write(packet)
+          text << data
+        when 'final'
+          payload = JSON.parse(data)
+          raise ProtocolError unless payload.is_a?(Hash) && payload['content'] == text &&
+            payload['citations'].is_a?(Array) && payload['citations'].all? { |c| c.is_a?(String) } &&
+            [true, false].include?(payload['truncated'])
+          response.stream.write(packet)
+          terminal = true
+        when 'error'
+          Rails.logger.warn(event: 'runtime_error_frame')
+          write_stream_error('upstream_failed')
+          terminal = true
+        else
+          raise ProtocolError
+        end
+        break if terminal
+      end
+      break if terminal
+    end
+    write_stream_error('early_end') unless terminal
+  rescue IOError, Errno::EPIPE, Errno::ECONNRESET, ActionController::Live::ClientDisconnected
+    Rails.logger.info(event: 'client_disconnect')
+  rescue StandardError => error
+    code = error.is_a?(LlmClient::BoundaryError) && error.code == 'ai_read_timeout' ? 'read_timeout' : 'runtime_failure'
+    Rails.logger.warn(event: code, error_type: error.class.name)
+    begin
+      write_stream_error(code)
+    rescue IOError, Errno::EPIPE, Errno::ECONNRESET, ActionController::Live::ClientDisconnected
+      Rails.logger.info(event: 'client_disconnect')
+    end
+  end
+
+  def write_stream_error(code)
+    payload = JSON.generate(code: code, message: 'Reply interrupted; please retry.')
+    response.stream.write("event: error\ndata: #{payload}\n\n")
   end
 end

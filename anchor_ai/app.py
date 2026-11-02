@@ -94,6 +94,25 @@ async def structured_reply(
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
 
 
+@router.post('/infer/stream')
+async def infer_stream(
+    body: InferRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    from anchor_ai.streaming import response_for
+    return response_for(body, request)
+
+
 app.include_router(router)
 app.add_api_route('/infer', infer, methods=['POST'], response_model=InferResponse,
                   response_model_exclude_none=True)

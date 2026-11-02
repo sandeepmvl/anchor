@@ -42,6 +42,18 @@ class LlmClient:
         self.jitter = jitter or (lambda: random.uniform(0, 0.05))
         self.attempts = 0
 
+    async def stream_tokens(self, prompt):
+        try:
+            from .provider import stream_tokens
+        except ImportError:
+            from provider import stream_tokens
+        source = stream_tokens(self.provider, prompt)
+        try:
+            async for delta in source:
+                yield delta
+        finally:
+            await source.aclose()
+
     def complete(self, prompt, system=None, max_tokens=256, *, effort=None):
         return asyncio.run(self.complete_result(prompt, system, max_tokens, effort=effort)).reply
 

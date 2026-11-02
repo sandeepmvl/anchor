@@ -37,7 +37,7 @@ ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'provider_transport_error', 'provider_timeout', 'invalid_provider_response',
           'missing_provider_key', 'invalid_provider_mode', 'provider_rejected',
           'invalid_reasoning_effort', 'invalid_reasoning_limit',
-          'unsupported_reasoning_model', 'replay_miss'}
+          'unsupported_reasoning_model', 'replay_miss', 'client_disconnect'}
 
 
 def now():

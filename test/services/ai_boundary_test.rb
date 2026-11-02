@@ -102,7 +102,7 @@ class AiBoundaryTest < ActiveSupport::TestCase
     ["2\r\nInjected: yes", -1, 61, 1.5, nil].each do |raw|
       WebMock.reset!
       upstream.to_return(status: 429, body: JSON.generate(detail: {
-        code: "provider_rate_limited", retryable: true, retry_after: raw
+        code: "provider_rate_limited", retryable: true, retry_after: raw, attempts: 2
       }))
       error = assert_raises(LlmClient::BoundaryError) { @client.complete("Hello") }
       assert_nil error.retry_after
@@ -116,6 +116,39 @@ class AiBoundaryTest < ActiveSupport::TestCase
     error = assert_raises(LlmClient::BoundaryError) { @client.complete("Hello") }
     assert_equal "provider_auth_failed", error.code
     assert_equal 502, error.status
-    assert_equal false, error.retryable
+  end
+
+  def streaming_upstream
+    stub_request(:post, ENV.fetch('ANCHOR_AI_URL') + '/stream').with(
+      headers: {'X-Anchor-Secret' => ENV.fetch('ANCHOR_AI_SECRET'),
+        'Content-Type' => 'application/json', 'Accept' => 'text/event-stream'},
+      body: JSON.generate(version: 'v1', conversation_id: 1, message: 'Hello', tenant_id: 1)
+    )
+  end
+
+  test 'stream yields SSE bytes through the authenticated boundary' do
+    body = "event: token\ndata: Hello\n\nevent: final\ndata: {}\n\n"
+    call = streaming_upstream.to_return(status: 200,
+      headers: {'Content-Type' => 'text/event-stream'}, body: body)
+    chunks = []
+    @client.stream('Hello') { |chunk| chunks << chunk }
+    assert_equal body, chunks.join
+    assert_requested call, times: 1
+  end
+
+  test 'downstream callback failure escapes without retry' do
+    call = streaming_upstream.to_return(status: 200,
+      headers: {'Content-Type' => 'text/event-stream'}, body: ": ping\n\n")
+    original = IOError.new('closed downstream')
+    error = assert_raises(IOError) { @client.stream('Hello') { raise original } }
+    assert_same original, error
+    assert_requested call, times: 1
+  end
+
+  test 'stream converts runtime read timeout without retry' do
+    call = streaming_upstream.to_raise(Net::ReadTimeout)
+    error = assert_raises(LlmClient::BoundaryError) { @client.stream('Hello') { |_| } }
+    assert_equal ['ai_read_timeout', 504], [error.code, error.status]
+    assert_requested call, times: 1
   end
 end

@@ -40,6 +40,48 @@ class LlmClient
     end
   end
 
+  def stream(message)
+    AiTelemetry.span('rails.infer_call', stage: 'boundary', tenant_id: 1, conversation_id: 1) do |span|
+      config = YAML.safe_load(ERB.new(Rails.root.join('config/llm.yml').read).result).fetch('shared')
+      uri = URI(config.fetch('url').sub(%r{/$}, '') + '/stream')
+      fail_boundary('ai_configuration_error', 503) unless %w[http https].include?(uri.scheme) && uri.host
+      secret = ENV.fetch('ANCHOR_AI_SECRET')
+      fail_boundary('ai_configuration_error', 503) if secret.strip.empty?
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.scheme == 'https'
+      http.open_timeout = positive_timeout(config.fetch('open_timeout'))
+      http.read_timeout = positive_timeout(config.fetch('read_timeout'))
+      http.max_retries = 0
+      request = Net::HTTP::Post.new(uri.request_uri)
+      request['Content-Type'] = 'application/json'
+      request['Accept'] = 'text/event-stream'
+      request['X-Anchor-Secret'] = secret
+      span.headers.each { |key, value| request[key] = value }
+      request.body = JSON.generate(version: 'v1', conversation_id: 1, message: message, tenant_id: 1)
+      http.start do
+        http.request(request) do |response|
+          status = response.code.to_i
+          span.set(status_code: status)
+          fail_boundary('ai_auth_rejected', 502) if status == 401
+          fail_boundary('ai_contract_rejected', 502) if status == 422
+          fail_boundary('ai_upstream_error', 502) unless status == 200
+          unless response['Content-Type'].to_s.start_with?('text/event-stream')
+            fail_boundary('ai_invalid_response', 502)
+          end
+          response.read_body { |chunk| yield chunk }
+        end
+      end
+    end
+  rescue Net::OpenTimeout
+    fail_boundary('ai_connect_timeout', 504)
+  rescue Net::ReadTimeout
+    fail_boundary('ai_read_timeout', 504)
+  rescue Errno::ECONNREFUSED
+    fail_boundary('ai_connection_refused', 503)
+  rescue KeyError, ArgumentError
+    fail_boundary('ai_configuration_error', 503)
+  end
+
   private
 
   def api_key

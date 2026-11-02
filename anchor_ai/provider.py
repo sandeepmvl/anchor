@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -213,3 +214,59 @@ def classify(response):
     codes = {400: 'provider_bad_request', 401: 'provider_auth_failed',
              403: 'provider_forbidden', 404: 'provider_not_found'}
     return ProviderError(codes.get(status, 'provider_rejected'), status=status if 400 <= status < 500 else 502)
+
+
+@dataclass
+class Delta:
+    text: str = ''
+    stop: str | None = None
+
+
+async def stream_tokens(provider, message):
+    if isinstance(provider, ReplayProvider):
+        for text in ['Refunds ', 'take ', 'five ', 'days.']:
+            await asyncio.sleep(0.12)
+            yield Delta(text=text)
+        yield Delta(stop='stop')
+        return
+    payload = {
+        'model': os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
+        'messages': [{'role': 'user', 'content': message}],
+        'max_tokens': 256, 'stream': True,
+    }
+    # Never retry a stream: that could repeat already disclosed text.
+    try:
+        async with provider.client() as client:
+            async with client.stream(
+                'POST', 'https://api.openai.com/v1/chat/completions',
+                headers={'Authorization': 'Bearer ' + provider.key()},
+                json=payload, timeout=httpx.Timeout(30, connect=2),
+            ) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    raise classify(response)
+                data = []
+                async for line in response.aiter_lines():
+                    if line.startswith('data:'):
+                        data.append(line[5:].removeprefix(' '))
+                    elif line == '' and data:
+                        raw, data = '\n'.join(data), []
+                        if raw == '[DONE]':
+                            return
+                        record = json.loads(raw)
+                        if 'error' in record:
+                            raise ProviderError('provider_transport_error')
+                        for choice in record.get('choices', []):
+                            if choice.get('index', 0) != 0:
+                                continue
+                            text = choice.get('delta', {}).get('content')
+                            if text:
+                                if not isinstance(text, str):
+                                    raise ProviderError('invalid_provider_response')
+                                yield Delta(text=text)
+                            if choice.get('finish_reason'):
+                                yield Delta(stop=choice['finish_reason'])
+    except httpx.TimeoutException:
+        raise ProviderError('provider_timeout') from None
+    except httpx.TransportError:
+        raise ProviderError('provider_transport_error') from None

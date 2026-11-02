@@ -1,0 +1,98 @@
+<%= csrf_meta_tags %>
+<h1>Anchor chat</h1>
+<form id="chat-form">
+  <label>Message <input id="message" value="When will my refund arrive?" required></label>
+  <button id="send">Send / retry as new request</button>
+</form>
+<button id="stop" type="button" disabled>Stop</button>
+<p id="state" role="status">Ready</p>
+<pre id="answer" style="white-space: pre-wrap"></pre>
+<ul id="citations" aria-label="Citations"></ul>
+<script>
+(() => {
+  const find = id => document.getElementById(id);
+  const state = find('state'), answer = find('answer'), citations = find('citations');
+  const send = find('send'), stop = find('stop');
+  const csrf = () => document.querySelector('meta[name="csrf-token"]').content;
+  let aborter;
+  const interrupted = message => {
+    state.textContent = message + ' Partial text is unconfirmed. Retry starts a new request.';
+    citations.replaceChildren();
+  };
+  find('chat-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    aborter = new AbortController();
+    answer.textContent = '';
+    citations.replaceChildren();
+    send.disabled = true;
+    stop.disabled = false;
+    state.textContent = 'Drafting — partial output';
+    let reader, terminal = false, buffer = '';
+    const decoder = new TextDecoder('utf-8', {fatal: true});
+    function dispatch(packet) {
+      if (packet.startsWith(':')) return;
+      if (terminal) throw new Error('Event after terminal event');
+      let name = 'message';
+      const data = [];
+      for (const line of packet.split(/\r?\n/)) {
+        if (line.startsWith('event:')) name = line.slice(6).trim();
+        if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+      }
+      const value = data.join('\n');
+      if (name === 'token') answer.textContent += value;
+      else if (name === 'final') {
+        const reply = JSON.parse(value);
+        if (reply.content !== answer.textContent || !Array.isArray(reply.citations) ||
+            !reply.citations.every(c => typeof c === 'string') ||
+            typeof reply.truncated !== 'boolean') throw new Error('Invalid final reply');
+        terminal = true;
+        state.textContent = reply.truncated ? 'Cut off — not a full answer.' : 'Finished';
+        const sources = reply.citations.length ? reply.citations : ['No source citations attached.'];
+        for (const citation of sources) {
+          const item = document.createElement('li');
+          item.textContent = citation;
+          citations.append(item);
+        }
+      } else if (name === 'error') {
+        terminal = true;
+        interrupted(JSON.parse(value).message);
+      } else throw new Error('Unknown stream event');
+    }
+    try {
+      const response = await fetch('/chat', {
+        method: 'POST', credentials: 'same-origin', signal: aborter.signal,
+        headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream',
+          'X-CSRF-Token': csrf()},
+        body: JSON.stringify({message: find('message').value})
+      });
+      if (!response.ok || !response.body ||
+          !response.headers.get('Content-Type')?.startsWith('text/event-stream')) {
+        throw new Error('Chat HTTP ' + response.status);
+      }
+      reader = response.body.getReader();
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += done ? decoder.decode() : decoder.decode(value, {stream: true});
+        let boundary;
+        while ((boundary = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const packet = buffer.slice(0, boundary.index);
+          buffer = buffer.slice(boundary.index + boundary[0].length);
+          dispatch(packet);
+        }
+        if (done) break;
+      }
+      if (!terminal || buffer.trim()) throw new Error('Stream ended without a terminal frame');
+    } catch (error) {
+      interrupted(error.name === 'AbortError' ? 'Stopped.' : error.message);
+    } finally {
+      if (reader) {
+        try { await reader.cancel(); } catch (_) {}
+        reader.releaseLock();
+      }
+      send.disabled = false;
+      stop.disabled = true;
+    }
+  });
+  stop.addEventListener('click', () => aborter?.abort());
+})();
+</script>
