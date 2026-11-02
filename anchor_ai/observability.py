@@ -35,6 +35,8 @@ FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model
           'output_reserve', 'context_window', 'pre_history_tokens', 'summary_calls',
           'summary_input_tokens', 'summary_output_cap', 'summary_version',
           'folded_position', 'pending_messages', 'context_fallback'}
+FIELDS.update({'server_ttft_ms', 'stream_total_ms', 'pacing_peak_chars'})
+# These are producer-local durations, not client delivery measurements.
 ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'internal_error', 'provider_bad_request', 'provider_auth_failed',
           'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
@@ -306,7 +308,7 @@ def vision_span():
 def realtime_event(session, scope, event, epoch, queue_depth, **fields):
     allowed = {'send_ms', 'expected', 'received'}
     events = {'send_done', 'queued', 'barge_in', 'stt_start', 'stt_done',
-              'generation_start', 'answer_text', 'tts_start', 'audio',
+              'generation_start', 'answer_text', 'tts_start', 'tts_done', 'audio',
               'frame_gap', 'speech_start', 'end_of_speech', 'session_failure', 'session_closed'}
     if event not in events or set(fields) - allowed:
         raise ValueError('unsafe_realtime_metadata')

@@ -48,8 +48,10 @@ class ChatController < ApplicationController
       config = YAML.safe_load(ERB.new(Rails.root.join('config/llm.yml').read).result).fetch('shared')
       selector = params.fetch(:prompt_version, config.fetch('default_prompt_version'))
       contract = PromptRegistry.resolve(selector)
-      Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
-        prompt_version: contract.fetch('version'))
+      unless stream_request?
+        Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
+          prompt_version: contract.fetch('version'))
+      end
       message = PromptRegistry::Message.new(message, contract)
       if params.key?(:history) || params.key?(:summary_state)
         options = params.permit(history: [:position, :role, :content],
@@ -67,7 +69,10 @@ class ChatController < ApplicationController
       response.headers['Cache-Control'] = 'no-cache'
       response.headers['X-Accel-Buffering'] = 'no'
       ActiveRecord::Base.connection_pool.release_connection
+      write_stream_packet("event: status\ndata: Preparing your reply\n\n")
       relay(message)
+      Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
+        prompt_version: contract.fetch('version'))
     end
   rescue ActiveRecord::RecordNotFound
     render json: { error: 'unknown_prompt_version' }, status: :unprocessable_entity
@@ -155,7 +160,7 @@ class ChatController < ApplicationController
         packet = buffer.slice!(0, boundary.end(0)).force_encoding(Encoding::UTF_8)
         raise ProtocolError unless packet.valid_encoding?
         if packet.start_with?(':')
-          response.stream.write(packet)
+          write_stream_packet(packet)
           next
         end
         lines = packet.split(/\r?\n/)
@@ -164,14 +169,14 @@ class ChatController < ApplicationController
           .map { |line| line.delete_prefix('data:').delete_prefix(' ') }.join("\n")
         case name
         when 'token'
-          response.stream.write(packet)
+          write_stream_packet(packet, token: !data.empty?)
           text << data
         when 'final'
           payload = JSON.parse(data)
           raise ProtocolError unless payload.is_a?(Hash) && payload['content'] == text &&
             payload['citations'].is_a?(Array) && payload['citations'].all? { |c| c.is_a?(String) } &&
             [true, false].include?(payload['truncated'])
-          response.stream.write(packet)
+          write_stream_packet(packet)
           terminal = true
         when 'error'
           Rails.logger.warn(event: 'runtime_error_frame')
@@ -197,8 +202,13 @@ class ChatController < ApplicationController
     end
   end
 
+  def write_stream_packet(packet, token: false)
+    response.stream.write(packet)
+    AiTelemetry.current&.mark_stream_write(token: token)
+  end
+
   def write_stream_error(code)
     payload = JSON.generate(code: code, message: 'Reply interrupted; please retry.')
-    response.stream.write("event: error\ndata: #{payload}\n\n")
+    write_stream_packet("event: error\ndata: #{payload}\n\n")
   end
 end

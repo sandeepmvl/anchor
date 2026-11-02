@@ -5,3 +5,9 @@ profiling:
   percentile: nearest_rank
   remainder_limit: 0.10
   record_content: false
+stream_pacing:
+  enabled: false
+  target_interval: 0.025
+  chunk_chars: 3
+  max_buffer_chars: 96
+  max_flush_delay: 0.12

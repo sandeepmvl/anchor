@@ -3,7 +3,8 @@ require 'securerandom'
 require 'time'
 
 class AiTelemetry
-  FIELDS = %i[stage status_code tenant_id conversation_id].freeze
+  FIELDS = %i[stage status_code tenant_id conversation_id
+    first_byte_write_ms first_token_write_ms].freeze
   ERRORS = %w[ai_auth_rejected ai_contract_rejected ai_upstream_error ai_invalid_response
     ai_connect_timeout ai_read_timeout ai_connection_refused ai_configuration_error
     provider_bad_request provider_auth_failed provider_forbidden provider_not_found
@@ -90,6 +91,16 @@ class AiTelemetry
     def set(**fields)
       raise ArgumentError, 'non-allowlisted telemetry field' unless (fields.keys - FIELDS).empty?
       @record.merge!(fields)
+    end
+
+    def mark_stream_write(token: false)
+      elapsed = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started) * 1000
+      unless @record.key?(:first_byte_write_ms)
+        set(first_byte_write_ms: elapsed)
+      end
+      if token && !@record.key?(:first_token_write_ms)
+        set(first_token_write_ms: elapsed)
+      end
     end
 
     def child_context
