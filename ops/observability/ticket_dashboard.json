@@ -2,10 +2,11 @@
   "uid": "anchor-tickets",
   "title": "Anchor ticket pipeline",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {"from": "now-15m", "to": "now"},
   "panels": [
+    {"id": 5, "title": "Online groundedness — closed windows", "type": "table", "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8}, "description": "Source: answer_quality_samples grouped by event_at / 60, organization_id, intent, model_version and evaluator_version. Exclude non-scored rows. Apply anchor_ai.online_quality.windows after the scoring deadline. Offline preview: python3 -m anchor_ai.online_quality. This panel requires a deployment-specific read-only SQL datasource; no fabricated Prometheus metric is queried.", "targets": []},
     {"id": 1, "title": "Bounded request p95 (ms)", "type": "timeseries", "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "anchor-metrics"}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(anchor_duration_milliseconds_bucket{span_name=\"python.bounded_agent\"}[5m])))"}]},
     {"id": 2, "title": "Failed root spans / root spans", "type": "timeseries", "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "anchor-metrics"}, "targets": [{"expr": "sum(rate(anchor_calls_total{span_name=\"python.bounded_agent\",status=\"error\"}[5m])) / sum(rate(anchor_calls_total{span_name=\"python.bounded_agent\"}[5m]))"}]},
     {"id": 3, "title": "Observed tokens / second", "type": "timeseries", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "anchor-metrics"}, "targets": [{"expr": "sum by (direction) (rate(anchor_tokens_total[5m]))"}]},

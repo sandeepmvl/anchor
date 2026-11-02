@@ -1,0 +1,15 @@
+seed: anchor-quality-v1
+sample_rate: 1.0
+# Above roughly 5,000 daily answers, start with 0.05 instead.
+# This is a budget rule, not a statistically derived sample size.
+daily_tenant_limit: 500
+estimated_usd_per_judgment: 0.002
+window_seconds: 60
+minimum_valid: 5
+floor: 0.8
+sustained_windows: 2
+evaluator_version: groundedness-online-v1
+# Close only windows whose scoring deadline has passed.
+# Late scores remain stored but do not rewrite a closed-window decision.
+scoring_deadline_seconds: 120
+request_timeout_seconds: 5

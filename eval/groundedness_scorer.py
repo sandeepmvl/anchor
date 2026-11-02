@@ -6,6 +6,11 @@ from anchor_ai.pii import redact_evaluation
 from eval.faithfulness import ROOT, make_judge, persist_report, score_payload
 
 
+def score_online(payload, judge=None):
+    """Use the existing citation-aware judge and its prompt, not a second metric."""
+    return redact_evaluation(score_payload(payload, judge if judge is not None else make_judge()))
+
+
 def load_dataset():
     return json.loads((ROOT / 'eval/datasets/groundedness_cases.json').read_text())
 

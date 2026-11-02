@@ -31,9 +31,13 @@ class PromptRegistryTest < ActiveSupport::TestCase
 
   test 'export contracts for offline boundary demo' do
     path = ENV['ANCHOR_PROMPT_EXPORT']
-    next unless path
     contracts = %w[chat:v1 chat:v2].map { |version| PromptRegistry.resolve(version) }
-    File.write(path, JSON.generate(contracts))
+    assert_equal %w[chat:v1 chat:v2], contracts.map { |contract| contract.fetch('version') }
+    assert_equal contracts, JSON.parse(JSON.generate(contracts))
+    if path
+      File.write(path, JSON.generate(contracts))
+      assert_equal contracts, JSON.parse(File.read(path))
+    end
   end
 
   test 'invalid registration reports errors without changing published data' do

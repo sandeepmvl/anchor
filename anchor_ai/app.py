@@ -611,6 +611,26 @@ from anchor_ai.pii import RedactionUnavailable, redact_value
 from pydantic import BaseModel, ConfigDict
 
 
+class OnlineQualityRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    payload: dict
+
+
+@app.post('/v1/quality/score')
+def online_quality_route(body: OnlineQualityRequest,
+    x_anchor_secret: Annotated[str | None, Header()] = None):
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    from anchor_ai.online_quality import score
+    try:
+        return score(redact_value(body.payload))
+    except Exception:
+        raise HTTPException(status_code=503, detail='quality_scoring_unavailable') from None
+
+
 class RedactionRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     value: object

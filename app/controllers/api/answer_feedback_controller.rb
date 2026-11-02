@@ -6,6 +6,7 @@ class Api::AnswerFeedbackController < ApplicationController
     raise GoldenCandidate::InvalidInput, 'down_required' unless params[:rating] == 'down'
     feedback, candidate = GoldenCandidate.feedback!(claims: claims,
       message_id: params.require(:message_id), comment: params[:comment])
+    AnswerQualitySample.attach_feedback!(feedback: feedback, message_id: params.require(:message_id))
     render json: {feedback_event_id: feedback.id, golden_candidate_id: candidate.id,
       status: candidate.status}
   rescue GoldenCandidate::AuthorizationError

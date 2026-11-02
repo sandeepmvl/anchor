@@ -21,6 +21,14 @@ class OrchestrateTicketJob < ApplicationJob
     )
   end
 
+  # Invoke from the trusted answer-persistence boundary, after committing the
+  # exact answer version. Do not derive organization from customer JSON.
+  def self.completed_answer(**attributes)
+    sample = AnswerQualitySample.capture!(**attributes)
+    ScoreAnswerQualityJob.perform_later(sample.organization_id, sample.id) if sample&.status == 'pending'
+    sample
+  end
+
   # Called only after the upload boundary persists sanitized evidence.
   def self.enqueue_attachment(organization_id, attachment_id)
     ProcessTicketAttachmentJob.perform_later(organization_id, attachment_id)
