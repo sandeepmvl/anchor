@@ -4,6 +4,8 @@ class Document < ApplicationRecord
   validates :external_id, :source_name, :content_hash, :text, presence: true
   validates :external_id, :content_hash, uniqueness: { scope: :tenant_id }
   validates :status, inclusion: { in: %w[processing ready] }
+  validates :chunker_version, presence: true
+  # source_scope limits inventory reconciliation; authentication supplies tenant_id.
   validate :redacted_payload
 
   def self.contains_pii?(text)

@@ -62,6 +62,37 @@ def ingest(tenant_id, reference, db_path):
         db.close()
 
 
+def sync_directory(db, tenant_id, directory, client=None, chunker_version='sentence-v1'):
+    from .index_maintenance import maintain_document, delete_document, valid_tenant
+    valid_tenant(tenant_id)
+    directory = Path(directory).resolve()
+    if not directory.is_dir():
+        raise ValueError('source_inventory_unavailable')
+    scope = str(directory)
+    inventory = {}
+    for path in sorted(directory.iterdir()):
+        if path.suffix.lower() not in {'.md', '.html', '.txt'} or not path.is_file():
+            continue
+        text = prepare(path.read_text(encoding='utf-8'), path.suffix.lower())
+        if not text.strip():
+            raise ValueError('empty_source')
+        sidecar = path.with_name(path.name + '.metadata.json')
+        metadata = json.loads(sidecar.read_text()) if sidecar.exists() else {'title': path.stem}
+        if not isinstance(metadata, dict):
+            raise ValueError('invalid_metadata')
+        inventory[path.name] = (text, metadata)
+    result = []
+    for external_id, (text, metadata) in inventory.items():
+        result.append(maintain_document(db, tenant_id, external_id, text, metadata,
+                      chunker_version, scope, client=client))
+    vanished = db.execute('SELECT external_id FROM documents WHERE tenant_id=? AND source_scope=?',
+                          (tenant_id, scope)).fetchall()
+    for row in vanished:
+        if row['external_id'] not in inventory:
+            delete_document(db, tenant_id, row['external_id'])
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['stage', 'ingest'])

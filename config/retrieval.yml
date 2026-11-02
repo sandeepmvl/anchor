@@ -53,3 +53,10 @@ vector_index:
       M: 12
       efConstruction: 40
       sweep: [16, 64, 128]
+
+maintenance:
+  # DB retrieval_generations is authoritative for query and stored vectors.
+  source_inventory: complete_directory
+  chunker_version: sentence-v1
+  rollback_policy: refresh_all_retained_ready_generations
+  embedding_provider_env: ANCHOR_EMBEDDING_PROVIDER

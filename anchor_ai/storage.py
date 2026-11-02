@@ -17,6 +17,10 @@ def persist(db, tenant_id, external_id, text, content_hash, make_nodes):
         raise ValueError('invalid_tenant')
     if text != prepare(text):
         raise ValueError('unredacted_payload')
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='retrieval_generations'").fetchone():
+        from .index_maintenance import maintain_document
+        return maintain_document(db, tenant_id, external_id, text, {}, 'sentence-v1',
+                                 None, supplied_nodes=make_nodes)
     db.execute('BEGIN IMMEDIATE')
     try:
         previous = db.execute('SELECT content_hash FROM documents WHERE tenant_id=? AND external_id=?',
@@ -66,3 +70,49 @@ def persist(db, tenant_id, external_id, text, content_hash, make_nodes):
     except Exception:
         db.rollback()
         raise
+
+
+def initialize_sandbox(path):
+    """Create only a new, explicitly named lab database; never reset one."""
+    path = Path(path)
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    try:
+        db.executescript('''
+        PRAGMA foreign_keys=ON;
+        CREATE TABLE documents (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL,
+          external_id TEXT NOT NULL, source_name TEXT NOT NULL, content_hash TEXT NOT NULL,
+          text TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT, updated_at TEXT,
+          metadata_hash TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}',
+          chunker_version TEXT NOT NULL DEFAULT 'sentence-v1', source_scope TEXT,
+          UNIQUE(tenant_id, external_id), UNIQUE(tenant_id, content_hash));
+        CREATE TABLE retrieval_generations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL,
+          model TEXT NOT NULL, revision TEXT NOT NULL, dimensions INTEGER NOT NULL CHECK(dimensions>0),
+          status TEXT NOT NULL DEFAULT 'building', active INTEGER NOT NULL DEFAULT 0,
+          vector_column TEXT NOT NULL DEFAULT 'embedding_v2'
+            CHECK(vector_column IN ('embedding','embedding_v2')),
+          base_generation_id INTEGER, epoch INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT, updated_at TEXT);
+        CREATE UNIQUE INDEX one_active_retrieval_generation
+          ON retrieval_generations(tenant_id) WHERE active=1;
+        CREATE TABLE document_chunks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL,
+          document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          chunk_index INTEGER NOT NULL, parent_id INTEGER REFERENCES document_chunks(id) ON DELETE CASCADE,
+          is_leaf INTEGER NOT NULL, text TEXT NOT NULL, window_text TEXT,
+          embedding TEXT, embedding_model TEXT, embedding_revision TEXT,
+          embedding_dimensions INTEGER, created_at TEXT, updated_at TEXT,
+          retrieval_generation_id INTEGER REFERENCES retrieval_generations(id) ON DELETE CASCADE,
+          embedding_v2 TEXT, source_hash TEXT, chunker_version TEXT,
+          metadata TEXT NOT NULL DEFAULT '{}');
+        CREATE UNIQUE INDEX unique_generation_chunk
+          ON document_chunks(document_id,retrieval_generation_id,chunk_index);
+        CREATE UNIQUE INDEX unique_legacy_chunk ON document_chunks(document_id,chunk_index)
+          WHERE retrieval_generation_id IS NULL;
+        ''')
+    finally:
+        db.close()

@@ -91,3 +91,39 @@ class VectorIndex:
             order = np.lexsort((ids, -scores))
         return [{'chunk_id': str(ids[i]), 'score': float(scores[i])}
                 for i in order[:k]]
+
+    def search_active(self, db, tenant_id, text, client=None, k=10, authorized_document_ids=None):
+        import json
+        from .index_maintenance import active, EmbeddingClient
+        client = client or EmbeddingClient()
+        db.execute('BEGIN')
+        try:
+            gen = active(db, tenant_id)
+            if gen is None or gen['status'] != 'ready':
+                raise ValueError('no_ready_generation')
+            if gen['vector_column'] not in {'embedding', 'embedding_v2'}:
+                raise ValueError('unknown_vector_column')
+            rows = [dict(row) for row in db.execute('''SELECT * FROM document_chunks
+                WHERE tenant_id=? AND retrieval_generation_id=? AND is_leaf=1''',
+                (tenant_id, gen['id']))]
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        allowed = None if authorized_document_ids is None else set(authorized_document_ids)
+        rows = [r for r in rows if allowed is None or r['document_id'] in allowed]
+        space = Generation(gen['model'], gen['revision'], gen['dimensions'])
+        # Reload the complete authorized snapshot. No process-local stale-row fallback.
+        self._partitions.clear()
+        self.snapshot_key = (tenant_id, gen['id'], gen['epoch'])
+        mapped = []
+        for row in rows:
+            if (row['embedding_model'], row['embedding_revision'], row['embedding_dimensions']) != (space.model, space.revision, space.dimensions):
+                raise ValueError('mixed_generation')
+            mapped.append(dict(tenant_id=str(tenant_id), chunk_id=row['id'], model=space.model,
+                               revision=space.revision, dimensions=space.dimensions,
+                               vector=json.loads(row[gen['vector_column']])))
+        self.load(str(tenant_id), space, mapped)
+        hits = self.search(str(tenant_id), space, client.embed(text, gen), k)
+        return {'generation_id': gen['id'], 'model': space.model,
+                'dimensions': space.dimensions, 'chunks_checked': len(rows), 'hits': hits}
