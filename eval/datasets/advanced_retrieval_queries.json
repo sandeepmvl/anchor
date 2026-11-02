@@ -1,0 +1,33 @@
+{
+  "version": "advanced-queries-v1",
+  "corpus_version": "advanced-support-v1",
+  "kb_path": "anchor_ai/tests/fixtures/kb/advanced_support.json",
+  "judging_policy": "Every document in this frozen tenant fixture was reviewed for every query. Omitted document IDs have grade 0. Grades: 1=context, 2=useful policy, 3=direct policy or exception.",
+  "depth": 10,
+  "cases": [
+    {"id":"r01","tenant_id":"northstar","group":"lexical-policy","query":"Can I refund an activated R01 purchase?","grades":{"refund-00":2,"refund-r01":3},"rationale":"The window and the R01 activation prohibition both apply."},
+    {"id":"r02","tenant_id":"northstar","group":"lexical-policy","query":"Who approves a refund for activated R02?","grades":{"refund-00":2,"refund-r02":3},"rationale":"The window and the R02 supervisor rule both apply."},
+    {"id":"r03","tenant_id":"northstar","group":"lexical-policy","query":"Does an activated R03 refund return cash?","grades":{"refund-00":2,"refund-r03":3},"rationale":"The window and the R03 credit-only exception both apply."},
+    {"id":"r04","tenant_id":"northstar","group":"lexical-policy","query":"Is there a fee to refund activated R04?","grades":{"refund-00":2,"refund-r04":3},"rationale":"The window and the R04 fee rule both apply."},
+    {"id":"r05","tenant_id":"northstar","group":"lexical-policy","query":"How long can I refund an activated R05 purchase?","grades":{"refund-00":2,"refund-r05":3},"rationale":"The general window provides context; the R05 seven-day exception controls."},
+    {"id":"r06","tenant_id":"northstar","group":"lexical-policy","query":"What review does an activated R06 refund need?","grades":{"refund-00":2,"refund-r06":3},"rationale":"The window and the R06 usage review both apply."},
+    {"id":"r07","tenant_id":"northstar","group":"lexical-policy","query":"What authorization is needed to refund activated R07?","grades":{"refund-00":2,"refund-r07":3},"rationale":"The window and the R07 signed authorization both apply."},
+    {"id":"r08","tenant_id":"northstar","group":"lexical-policy","query":"Must I deactivate R08 before a refund?","grades":{"refund-00":2,"refund-r08":3},"rationale":"The window and the R08 deactivation requirement both apply."},
+    {"id":"delivery-time","tenant_id":"northstar","group":"common-policy","query":"How many business days does delivery take?","grades":{"delivery":3},"rationale":"Delivery specifies the shipping interval."},
+    {"id":"tracking-stale","tenant_id":"northstar","group":"common-policy","query":"My tracking has stopped moving; when should I contact support?","grades":{"delivery":3},"rationale":"Delivery specifies the three-day tracking escalation."},
+    {"id":"invoice-pdf","tenant_id":"northstar","group":"common-policy","query":"Where can I download my invoice PDF?","grades":{"invoice":3},"rationale":"Invoice identifies Billing as the download location."},
+    {"id":"tax-correction","tenant_id":"northstar","group":"common-policy","query":"Can support correct the tax address on my receipt?","grades":{"invoice":3},"rationale":"Invoice specifies the correction process and deadline."},
+    {"id":"password-reset","tenant_id":"northstar","group":"common-policy","query":"How do I reset my account password?","grades":{"password":3},"rationale":"Password gives the email-link reset procedure."},
+    {"id":"reset-expired","tenant_id":"northstar","group":"common-policy","query":"My email reset link expired; what next?","grades":{"password":3},"rationale":"Password says to request a fresh link."},
+    {"id":"lost-authenticator","tenant_id":"northstar","group":"common-policy","query":"I lost my authenticator; can I use a recovery code?","grades":{"mfa":3},"rationale":"MFA documents recovery-code access."},
+    {"id":"no-recovery","tenant_id":"northstar","group":"common-policy","query":"How can I reset MFA without recovery codes?","grades":{"mfa":3},"rationale":"MFA requires support identity verification."},
+    {"id":"cancel-location","tenant_id":"northstar","group":"common-policy","query":"Where do I cancel my subscription?","grades":{"cancel":3},"rationale":"Cancellation identifies Billing."},
+    {"id":"cancel-access","tenant_id":"northstar","group":"common-policy","query":"Will cancellation immediately end my access?","grades":{"cancel":3},"rationale":"Cancellation preserves access through the paid term."},
+    {"id":"export-owner","tenant_id":"northstar","group":"common-policy","query":"Who can export conversation history as CSV?","grades":{"export":3},"rationale":"Export limits this operation to workspace owners."},
+    {"id":"export-expiry","tenant_id":"northstar","group":"common-policy","query":"When does my export file expire?","grades":{"export":3},"rationale":"Export gives the 24-hour download lifetime."},
+    {"id":"add-seats","tenant_id":"northstar","group":"common-policy","query":"Who can add agent seats?","grades":{"seats":3},"rationale":"Seats specifies the workspace-owner role."},
+    {"id":"seat-proration","tenant_id":"northstar","group":"common-policy","query":"Are extra seats charged for the whole billing period?","grades":{"seats":3},"rationale":"Seats specifies prorated billing."},
+    {"id":"webhook-retry","tenant_id":"northstar","group":"common-policy","query":"How long do failed webhook deliveries retry?","grades":{"webhook":3},"rationale":"Webhook gives the 24-hour retry interval."},
+    {"id":"webhook-signature","tenant_id":"northstar","group":"common-policy","query":"How do I verify an event signature?","grades":{"webhook":3},"rationale":"Webhook requires signature verification using its secret."}
+  ]
+}

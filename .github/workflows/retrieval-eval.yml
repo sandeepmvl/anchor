@@ -25,6 +25,8 @@ jobs:
         run: python -m pytest -q anchor_ai/tests
       - name: Versioned offline retrieval gate
         run: python eval/retrieval_gate.py
+      - name: Document-level dense versus hybrid benchmark
+        run: python -m eval.retrieval_eval --details
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'

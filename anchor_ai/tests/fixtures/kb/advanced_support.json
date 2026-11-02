@@ -1,0 +1,22 @@
+{
+  "version": "advanced-support-v1",
+  "documents": [
+    {"tenant_id":"northstar","document_id":"refund-00","text":"Refund window: purchases can be refunded within 30 days. Apply the product activation exception before approving a refund."},
+    {"tenant_id":"northstar","document_id":"refund-r01","text":"R01 refund exception: activated purchases are not refundable."},
+    {"tenant_id":"northstar","document_id":"refund-r02","text":"R02 refund exception: activated purchases require supervisor approval."},
+    {"tenant_id":"northstar","document_id":"refund-r03","text":"R03 refund exception: activated purchases receive account credit only."},
+    {"tenant_id":"northstar","document_id":"refund-r04","text":"R04 refund exception: activated purchases incur a ten percent fee."},
+    {"tenant_id":"northstar","document_id":"refund-r05","text":"R05 refund exception: activated purchases have a seven day refund window."},
+    {"tenant_id":"northstar","document_id":"refund-r06","text":"R06 refund exception: activated purchases must pass a usage review."},
+    {"tenant_id":"northstar","document_id":"refund-r07","text":"R07 refund exception: activated purchases need a signed return authorization."},
+    {"tenant_id":"northstar","document_id":"refund-r08","text":"R08 refund exception: activated purchases are refundable only after deactivation."},
+    {"tenant_id":"northstar","document_id":"delivery","text":"Delivery: shipping takes five business days. Tracking appears after dispatch; contact support if tracking has not moved for three days."},
+    {"tenant_id":"northstar","document_id":"invoice","text":"Invoice: download a PDF receipt from Billing. Invoice tax address corrections require a support request before month end."},
+    {"tenant_id":"northstar","document_id":"password","text":"Password: reset an account password using the email reset link. The link expires after fifteen minutes; request a fresh link if expired."},
+    {"tenant_id":"northstar","document_id":"mfa","text":"MFA: use a recovery code if the authenticator is lost. Without recovery codes, support must verify identity before resetting MFA."},
+    {"tenant_id":"northstar","document_id":"cancel","text":"Cancellation: cancel a subscription in Billing. Cancellation takes effect at renewal; access continues until the paid term ends."},
+    {"tenant_id":"northstar","document_id":"export","text":"Export: workspace owners can export conversation history as CSV. Export files expire after 24 hours."},
+    {"tenant_id":"northstar","document_id":"seats","text":"Seats: workspace owners can add agent seats. Additional seats are prorated for the remaining billing period."},
+    {"tenant_id":"northstar","document_id":"webhook","text":"Webhook: failed event deliveries retry for 24 hours. Verify the signature using the webhook secret before processing an event."}
+  ]
+}

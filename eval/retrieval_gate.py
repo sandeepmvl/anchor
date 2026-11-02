@@ -75,6 +75,8 @@ def main():
     print(json.dumps(report, sort_keys=True))
     enforce(report, dataset['thresholds'])
     print('PASS: offline retrieval gate; synthetic corpus, not production quality')
+    from eval.retrieval_eval import evaluate as evaluate_document_quality
+    evaluate_document_quality()
 
 
 if __name__ == '__main__':
