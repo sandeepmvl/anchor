@@ -35,3 +35,21 @@ ingestion:
       replacement: '[EMAIL]'
     - pattern: '\b[0-9]{3}-[0-9]{3}-[0-9]{4}\b'
       replacement: '[PHONE]'
+
+vector_index:
+  index_type: flat
+  metric: cosine
+  normalize: true
+  benchmark:
+    seed: 42
+    vectors: 20000
+    dimensions: 32
+    queries: 20
+    ivf:
+      nlist: 64
+      iterations: 5
+      sweep: [1, 8, 32]
+    hnsw:
+      M: 12
+      efConstruction: 40
+      sweep: [16, 64, 128]
