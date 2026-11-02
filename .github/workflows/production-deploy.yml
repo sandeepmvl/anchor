@@ -31,7 +31,7 @@ jobs:
           bundler-cache: true
       - run: python -m pip install -r anchor_ai/requirements.txt
       - run: python3 bin/deploy production
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: launch-evidence-${{ github.sha }}

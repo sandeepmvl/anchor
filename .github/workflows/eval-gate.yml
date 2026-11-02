@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m eval.release_gate candidate
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: candidate
           path: .git/anchor-eval/candidate.json
@@ -65,7 +65,7 @@ jobs:
           name: candidate
           path: .git/anchor-eval
       - run: python -m eval.release_gate ${{ matrix.check }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: report-${{ matrix.check }}
@@ -147,7 +147,7 @@ jobs:
         run: |
           export NEEDS_JSON="$(python -c 'import json,os; print(json.dumps({**{n:{"result":os.environ["EVALUATORS_RESULT"]} for n in ("golden","calibration","trajectory","regression")},"candidate":{"result":os.environ["CANDIDATE_RESULT"]},"accumulated":{"result":os.environ["ACCUMULATED_RESULT"]}}))')"
           python -m eval.release_gate decide
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evaluation-dashboard
@@ -156,7 +156,7 @@ jobs:
             .git/anchor-eval/evidence.json
           include-hidden-files: true
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success() && github.ref == 'refs/heads/main' && env.EVAL_TIER == 'full'
         with:
           name: anchor-baseline
