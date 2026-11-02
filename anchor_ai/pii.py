@@ -34,3 +34,19 @@ def prepare(text, suffix='.txt'):
     if not text:
         raise ValueError('empty_document')
     return text
+
+
+# Evaluation data is redacted before any client call or report output.
+# Apply configured detectors as well as this explicit email detector.
+EMAIL = r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'
+
+
+def redact_evaluation(value):
+    if isinstance(value, str):
+        return re.sub(EMAIL, '[REDACTED_EMAIL]', redact(value), flags=re.I)
+    if isinstance(value, list):
+        return [redact_evaluation(item) for item in value]
+    if isinstance(value, dict):
+        return {redact_evaluation(key): redact_evaluation(item)
+                for key, item in value.items()}
+    return value

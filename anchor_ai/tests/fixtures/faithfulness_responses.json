@@ -1,0 +1,26 @@
+{
+  "decompositions": {
+    "Refunds are available within 30 days.": ["Refunds are available within 30 days."],
+    "Refunds are available within 30 days and shipping insurance is included.": [
+      "Refunds are available within 30 days.",
+      "Shipping insurance is included."
+    ],
+    "Refunds are NOT available within 30 days.": ["Refunds are NOT available within 30 days."],
+    "You can get your money back within thirty days.": ["You can get your money back within thirty days."],
+    "": []
+  },
+  "verifications": {
+    "Refunds are available within 30 days.": {
+      "supported": true, "evidence_ids": [101], "reason": "Chunk 101 states the refund window."
+    },
+    "Shipping insurance is included.": {
+      "supported": false, "evidence_ids": [], "reason": "The retrieved evidence makes no insurance promise."
+    },
+    "Refunds are NOT available within 30 days.": {
+      "supported": false, "evidence_ids": [101], "reason": "The claim reverses the retrieved policy."
+    },
+    "You can get your money back within thirty days.": {
+      "supported": true, "evidence_ids": [101], "reason": "This paraphrases the same refund window."
+    }
+  }
+}

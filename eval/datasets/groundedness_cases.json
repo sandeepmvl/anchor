@@ -1,0 +1,17 @@
+{
+  "version": "groundedness-v1",
+  "query": "What is your refund policy?",
+  "tenant_id": "harbor",
+  "generation_id": "recorded-refund-v1",
+  "evidence": [
+    {"id": 101, "tenant_id": "harbor", "generation_id": "recorded-refund-v1", "text": "Refunds are available within 30 days."}
+  ],
+  "cases": [
+    {"id": "grounded", "answer": "Refunds are available within 30 days.", "citations": [101], "expected_score": 1.0},
+    {"id": "invented_promise", "answer": "Refunds are available within 30 days and shipping insurance is included.", "citations": [101], "expected_score": 0.5},
+    {"id": "invented_citation", "answer": "Refunds are available within 30 days.", "citations": [999], "expected_score": 0.0},
+    {"id": "contradiction", "answer": "Refunds are NOT available within 30 days.", "citations": [101], "expected_score": 0.0},
+    {"id": "paraphrase", "answer": "You can get your money back within thirty days.", "citations": [101], "expected_score": 1.0},
+    {"id": "empty", "answer": "", "citations": [], "expected_score": null}
+  ]
+}

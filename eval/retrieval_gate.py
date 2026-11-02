@@ -77,6 +77,8 @@ def main():
     print('PASS: offline retrieval gate; synthetic corpus, not production quality')
     from eval.retrieval_eval import evaluate as evaluate_document_quality
     evaluate_document_quality()
+    from eval.groundedness_scorer import run_gate
+    run_gate()
 
 
 if __name__ == '__main__':
