@@ -14,3 +14,4 @@ probe_lease_seconds: 0.2
 max_inflight: 4
 sdk_retries: 0
 record_content: false
+retry_owner: resilience

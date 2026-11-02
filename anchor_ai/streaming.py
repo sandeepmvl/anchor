@@ -4,6 +4,7 @@ import json
 import math
 import time
 
+import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
 from .observability import context, span
@@ -228,9 +229,26 @@ def response_for(body, request):
 
 
 async def cancel_tasks(tasks):
-    """Drain all session tasks, including tasks that failed before shutdown."""
-    pending = [task for task in tasks if task is not None]
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    """Cancel and drain explicitly owned children, not the session owner.
+
+    WebSocket shutdown can run inside an already cancelled AnyIO scope.
+    Shield only cleanup from that scope; do not shield provider execution or
+    suppress direct asyncio cancellation of the caller.
+    """
+    owner = asyncio.current_task()
+    children = []
+    seen = set()
+    for task in tasks:
+        if task is None or task is owner or task in seen:
+            continue
+        seen.add(task)
+        children.append(task)
+    if not children:
+        return
+    # FastAPI's cancellation scope must not interrupt sibling finalizers or
+    # cancel the gather future as the session is leaving its WebSocket scope.
+    with anyio.CancelScope(shield=True):
+        for task in children:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*children, return_exceptions=True)

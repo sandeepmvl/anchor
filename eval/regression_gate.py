@@ -9,6 +9,23 @@ from eval.regression_provider import (ReplayClient, digest, envelope,
 from eval.regression_assertions import results
 
 
+def incident_checks():
+    import asyncio
+    import tempfile
+    from anchor_ai.runtime import incident_regression_cases, recovered_trace
+    cases = incident_regression_cases()
+    with tempfile.TemporaryDirectory() as directory:
+        corrected = asyncio.run(recovered_trace(Path(directory) / 'corrected'))
+        human = asyncio.run(recovered_trace(Path(directory) / 'human', human=True))
+    if corrected['authority']['used'] > 12 or human['calls']:
+        raise ValueError('failover_budget_incident_regression')
+    return dict(passed=True, cases=cases,
+                reservations=corrected['authority']['used'],
+                human_only_provider_calls=len(human['calls']),
+                deployment_approved=False,
+                limitation='Offline incident replay; hosted and multi-host release evidence not verified')
+
+
 def validate_input(source):
     manifest = source['manifest']
     if manifest != load_manifest():
@@ -36,8 +53,7 @@ def run(source, regressed=False):
                 rows.append(dict(tag=prompt['tag'], id=example['id'], repeat=repeat,
                     output=answer['text'], rubric_score=answer['rubric_score'],
                     rubric_source=answer['rubric_source'],
-                    **results(answer['text'], manifest['expected'],
-                              manifest['similarity_threshold'])))
+                    **results(answer['text'], manifest['expected'], manifest['similarity_threshold'])))
     return dict(format='anchor-regression-v2', source=source,
         input_hash=digest(source), manifest_hash=digest(manifest),
         replay_hash=digest(REPLAYS.read_text()), cache=False,
@@ -65,8 +81,7 @@ def gate(report, release=False):
     for row in report['rows']:
         if not isinstance(row['output'], str) or not row['output'].strip():
             raise ValueError('missing_output')
-        checked.append(dict(row, **results(row['output'], manifest['expected'],
-                                            manifest['similarity_threshold'])))
+        checked.append(dict(row, **results(row['output'], manifest['expected'], manifest['similarity_threshold'])))
     candidate = [r for r in checked if r['tag'] == 'chat:v2']
     rate = sum(sum(r['checks'].values()) for r in candidate) / (len(candidate) * 4)
     regressed = []
@@ -80,6 +95,7 @@ def gate(report, release=False):
                 rates['chat:v1'] - rates['chat:v2'] > manifest['tolerance']):
             regressed.append(example['id'])
     blockers = []
+    incident_checks()
     if rate < manifest['assertion_threshold']:
         blockers.append('candidate_assertion_pass_rate')
     if regressed:
@@ -101,11 +117,18 @@ def main():
     parser.add_argument('--input')
     parser.add_argument('--regressed', action='store_true')
     parser.add_argument('--release', action='store_true')
+    parser.add_argument('--incident-only', action='store_true')
     parser.add_argument('--expect-blocked', action='store_true',
                         help='Smoke assertion only; never use this option as a CI release gate')
     args = parser.parse_args()
     path = Path(args.report)
     try:
+        if args.incident_only:
+            decision = incident_checks()
+            if args.release:
+                decision.update(passed=False, blockers=['fresh_hosted_and_calibrated_judge_evidence_missing'])
+            print(json.dumps(decision, indent=2))
+            return 0 if decision['passed'] else 1
         if args.run:
             source = json.loads(Path(args.input).read_text()) if args.input else fixture_input()
             report = run(source, args.regressed)
@@ -114,12 +137,11 @@ def main():
         else:
             report = json.loads(path.read_text())
         decision = gate(report, args.release)
-    except (ValueError, KeyError, TypeError, OSError) as error:
+    except (ValueError, KeyError, TypeError, OSError, AssertionError) as error:
         print(json.dumps({'passed': False, 'error': str(error)}))
         return 1
     print(json.dumps(decision, indent=2))
-    print('Same 20 support questions; worsened answers: ' +
-          (', '.join(decision['regressed_ids']) or 'none'))
+    print('Same 20 support questions; worsened answers: ' + (', '.join(decision['regressed_ids']) or 'none'))
     status = 0 if decision['passed'] else 1
     if args.expect_blocked:
         return 0 if status == 1 and decision['unsafe_ids'] == ['refund-01'] else 1

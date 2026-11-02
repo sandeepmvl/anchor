@@ -12,7 +12,6 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-
 import yaml
 
 
@@ -37,7 +36,8 @@ def configuration(path='config/provider_resilience.yml'):
             or c['base_seconds'] > c['cap_seconds']
             or c['probe_lease_seconds'] <= c['attempt_seconds']
             or c.get('sdk_retries') != 0
-            or c.get('record_content') is not False):
+            or c.get('record_content') is not False
+            or c.get('retry_owner', 'resilience') != 'resilience'):
         raise ValueError('invalid_resilience_configuration')
     return c
 
@@ -62,14 +62,12 @@ class CircuitStore:
     def locked(self, key):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT value FROM provider_circuits WHERE key=?',
-                             (key,)).fetchone()
+            row = db.execute('SELECT value FROM provider_circuits WHERE key=?', (key,)).fetchone()
             state = json.loads(row[0]) if row else dict(
                 state='closed', generation=0, failures=0, successes=0,
                 until=0, leases={})
             yield state
-            db.execute('INSERT OR REPLACE INTO provider_circuits VALUES (?,?)',
-                       (key, json.dumps(state)))
+            db.execute('INSERT OR REPLACE INTO provider_circuits VALUES (?,?)', (key, json.dumps(state)))
 
     def snapshot(self, key):
         with self.locked(key) as s:
@@ -107,8 +105,7 @@ class CircuitStore:
                 s['failures'] += 1
                 if probe or s['failures'] >= self.policy['trip_threshold']:
                     s.update(state='open', generation=s['generation'] + 1,
-                             successes=0, leases={},
-                             until=self.clock() + self.policy['cooldown_seconds'])
+                             successes=0, leases={}, until=self.clock() + self.policy['cooldown_seconds'])
                 return
             if probe:
                 s['successes'] += 1
@@ -124,8 +121,6 @@ def circuit_key(router, name):
 
 
 def is_retryable(error):
-    # Preserve the router's explicit classification. Unknown 429s and billing
-    # exhaustion are deliberately not treated as temporary throttling.
     return getattr(error, 'code', None) in {
         'provider_timeout', 'provider_transport_error',
         'provider_unavailable', 'provider_rate_limited'}
@@ -139,8 +134,7 @@ def delay_for(policy, index, error, jitter):
     if (type(noise) not in (int, float) or not math.isfinite(noise)
             or not 0 <= noise <= policy['jitter_seconds']):
         raise ValueError('invalid_retry_jitter')
-    exponential = min(policy['cap_seconds'],
-                      policy['base_seconds'] * 2 ** min(index, 30))
+    exponential = min(policy['cap_seconds'], policy['base_seconds'] * 2 ** min(index, 30))
     return max(exponential, hint) + noise
 
 
@@ -152,6 +146,11 @@ class ResilienceBoundary:
     """
     def __init__(self, router, store, policy, *, clock=time.monotonic,
                  sleep=asyncio.sleep, jitter=None, emit=None):
+        order = router.config['order']
+        if not order or len(order) != len(set(order)):
+            raise ValueError('cyclic_routing')
+        if policy.get('retry_owner', 'resilience') != 'resilience' or policy.get('sdk_retries', 0) != 0:
+            raise ValueError('conflicting_retry_ownership')
         self.router, self.store, self.policy = router, store, policy
         self.clock, self.sleep = clock, sleep
         self.jitter = jitter or (lambda: random.uniform(0, policy['jitter_seconds']))
@@ -205,7 +204,6 @@ class ResilienceBoundary:
     async def operation(self, request, tenant_id, payload):
         deadline = self.clock() + self.policy['total_seconds']
         attempts, retry_index = 0, 0
-        # This real outer timeout also bounds sleeps when using the real clock.
         async with asyncio.timeout(self.policy['total_seconds']):
             for name in self.router.config['order']:
                 if not self.router.eligible(name, tenant_id, payload):
@@ -223,8 +221,7 @@ class ResilienceBoundary:
                         self.event('circuit_skip', attempts)
                         break
                     attempts += 1
-                    response, error = await self.send(
-                        name, request, payload,
+                    response, error = await self.send(name, request, payload,
                         min(self.policy['attempt_seconds'], remaining), permit)
                     if self.clock() > deadline:
                         raise self.error('routing_deadline')
@@ -237,8 +234,6 @@ class ResilienceBoundary:
                         if response is not None:
                             return response
                         raise error
-                    # Open circuits are skipped on the next selection. Retrying
-                    # and switching provider consume the same counter and wait.
                     if attempts >= self.policy['max_attempts']:
                         raise self.error('routing_attempt_limit')
                     delay = delay_for(self.policy, retry_index, error, self.jitter)
@@ -268,8 +263,7 @@ class ResilienceBoundary:
         self.active += 1
         try:
             request = httpx.Request('POST', 'https://offline.invalid/probe', json=payload)
-            _, error = await self.send(name, request, payload,
-                                       self.policy['attempt_seconds'], permit)
+            _, error = await self.send(name, request, payload, self.policy['attempt_seconds'], permit)
             self.event('probe_failed' if error else 'probe_success', 1)
             return error is None
         finally:
@@ -278,19 +272,16 @@ class ResilienceBoundary:
 
 def attach(router, *, database, policy_path='config/provider_resilience.yml',
            clock=None, sleep=asyncio.sleep, jitter=None, emit=None):
-    """Bind once at worker initialization, after constructing the existing router.
-
-    The existing router's production refusal remains in force. This function
-    does not grant release evidence or bypass verified_routing_scope.
-    """
+    """Bind once; this does not grant release evidence or a quota allowance."""
+    if hasattr(router, 'resilience'):
+        raise ValueError('provider_resilience_already_initialized')
     policy = configuration(policy_path)
     clock = clock or time.monotonic
     if router.config.get('sdk_retries', 0) != 0:
         raise ValueError('nested_provider_retries')
     if router.config['attempt_timeout_seconds'] < policy['attempt_seconds']:
         raise ValueError('nested_timeout_smaller_than_resilience_allowance')
-    boundary = ResilienceBoundary(
-        router, CircuitStore(database, policy, clock=clock), policy,
+    boundary = ResilienceBoundary(router, CircuitStore(database, policy, clock=clock), policy,
         clock=clock, sleep=sleep, jitter=jitter, emit=emit)
     router.route = boundary.route
     router.probe = boundary.probe

@@ -27,8 +27,7 @@ class AiQuotaPolicy
     end
   end
 
-  # The application issues this context AFTER authenticating its customer.
-  # It is not a substitute for customer authentication or ticket authorization.
+  # Issue this context AFTER authenticating the customer and authorizing tickets.
   def self.issue_context(identity, secret:, now: Time.now.to_i)
     raise Denied.new('quota_identity_required', 401) unless secret.to_s.bytesize >= 32
     payload = Base64.urlsafe_encode64(JSON.generate(identity.merge('expires' => now + 300)), padding: false)
@@ -186,6 +185,107 @@ class AiQuotaPolicy
       totals(db, identity.fetch('tenant_id'), day).merge('tenant_id' => identity.fetch('tenant_id'),
         'day' => day, 'cap' => @config.fetch('quotas').fetch('daily_limit'),
         'unit' => @config.fetch('unit'))
+    end
+  end
+
+  # Additional incident admission, not a substitute for ordinary paid-path quotas.
+  class IncidentWindow
+    class Denied < StandardError; end
+    def initialize(path:, cap: 12, seconds: 60, clock: -> { Time.now.to_f })
+      unless cap.is_a?(Integer) && cap.positive? && seconds.is_a?(Integer) && seconds.positive?
+        raise Denied, 'invalid_window_configuration'
+      end
+      @path, @cap, @seconds, @clock = path.to_s, cap, seconds, clock
+      transaction do |db|
+        db.execute('CREATE TABLE IF NOT EXISTS incident_windows (tenant INTEGER, window INTEGER, used INTEGER NOT NULL, PRIMARY KEY(tenant,window))')
+        db.execute('CREATE TABLE IF NOT EXISTS incident_modes (tenant INTEGER PRIMARY KEY, human INTEGER NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS incident_tickets (tenant INTEGER, ticket TEXT, context TEXT NOT NULL, state TEXT NOT NULL, reason TEXT, PRIMARY KEY(tenant,ticket))')
+        db.execute('CREATE TABLE IF NOT EXISTS incident_attempts (id TEXT PRIMARY KEY, tenant INTEGER, ticket TEXT, window INTEGER, bound INTEGER)')
+      end
+    end
+    def transaction
+      db = SQLite3::Database.new(@path)
+      db.results_as_hash = true
+      db.busy_timeout = 2000
+      begin
+        db.execute('BEGIN IMMEDIATE')
+        result = yield db
+        db.execute('COMMIT')
+        result
+      rescue Exception
+        db.execute('ROLLBACK') if db.transaction_active?
+        raise
+      ensure
+        db.close
+      end
+    end
+    def identity!(tenant)
+      raise Denied, 'verified_tenant_required' unless tenant.is_a?(Integer) && tenant.positive?
+    end
+    def ticket!(db, tenant, ticket, context)
+      unless ticket.is_a?(String) && ticket.match?(/\A[A-Za-z0-9_-]{1,80}\z/) && context.is_a?(Hash)
+        raise Denied, 'ticket_context_required'
+      end
+      existing = db.get_first_row('SELECT * FROM incident_tickets WHERE tenant=? AND ticket=?', [tenant, ticket])
+      raise Denied, 'ticket_context_changed' if existing && JSON.parse(existing['context']) != context
+      db.execute('INSERT INTO incident_tickets VALUES(?,?,?,\'queued\',NULL)', [tenant, ticket, JSON.generate(context)]) unless existing
+    end
+    def handoff!(db, tenant, ticket, reason)
+      db.execute('UPDATE incident_tickets SET state=\'human\',reason=? WHERE tenant=? AND ticket=?', [reason, tenant, ticket])
+    end
+    def call(operation, tenant:, ticket: nil, context: nil, attempt_id: nil, bound: 1)
+      identity!(tenant)
+      transaction do |db|
+        window = (@clock.call / @seconds).floor
+        human = db.get_first_value('SELECT human FROM incident_modes WHERE tenant=?', [tenant]) == 1
+        case operation
+        when 'queue'
+          ticket!(db, tenant, ticket, context)
+          handoff!(db, tenant, ticket, 'human_only') if human
+        when 'human_only'
+          db.execute('INSERT OR REPLACE INTO incident_modes VALUES(?,1)', [tenant])
+          db.execute('UPDATE incident_tickets SET state=\'human\',reason=\'human_only\' WHERE tenant=? AND state=\'queued\'', [tenant])
+        when 'reserve'
+          ticket!(db, tenant, ticket, context)
+          state = db.get_first_value('SELECT state FROM incident_tickets WHERE tenant=? AND ticket=?', [tenant, ticket])
+          if human || state == 'human'
+            handoff!(db, tenant, ticket, 'human_only') if human
+            next snapshot_in(db, tenant, window).merge('allowed' => false, 'reason' => human ? 'human_only' : 'already_handed_off')
+          end
+          unless bound.is_a?(Integer) && bound.positive? && attempt_id.is_a?(String) && attempt_id.match?(/\A[A-Za-z0-9_-]{1,80}\z/)
+            raise Denied, 'invalid_reservation'
+          end
+          raise Denied, 'attempt_reused' if db.get_first_value('SELECT id FROM incident_attempts WHERE id=?', [attempt_id])
+          db.execute('INSERT OR IGNORE INTO incident_windows VALUES(?,?,0)', [tenant, window])
+          used = db.get_first_value('SELECT used FROM incident_windows WHERE tenant=? AND window=?', [tenant, window])
+          if used + bound > @cap
+            handoff!(db, tenant, ticket, 'budget_exhausted')
+            next snapshot_in(db, tenant, window).merge('allowed' => false, 'reason' => 'budget_exhausted')
+          end
+          db.execute('UPDATE incident_windows SET used=used+? WHERE tenant=? AND window=?', [bound, tenant, window])
+          db.execute('INSERT INTO incident_attempts VALUES(?,?,?,?,?)', [attempt_id, tenant, ticket, window, bound])
+          next snapshot_in(db, tenant, window).merge('allowed' => true, 'used_before' => used, 'reservation_id' => attempt_id)
+        when 'handoff'
+          ticket!(db, tenant, ticket, context)
+          handoff!(db, tenant, ticket, 'routing_exhausted')
+        when 'snapshot'
+          # Read under the admission transaction boundary.
+        else
+          raise Denied, 'unknown_operation'
+        end
+        snapshot_in(db, tenant, window)
+      end
+    end
+    def snapshot_in(db, tenant, window)
+      tickets = db.execute('SELECT ticket,context,state,reason FROM incident_tickets WHERE tenant=? ORDER BY ticket', [tenant]).map do |row|
+        { 'ticket' => row['ticket'], 'context' => JSON.parse(row['context']), 'state' => row['state'], 'reason' => row['reason'] }
+      end
+      { 'window' => window,
+        'used' => db.get_first_value('SELECT used FROM incident_windows WHERE tenant=? AND window=?', [tenant, window]) || 0,
+        'cap' => @cap,
+        'human_only' => db.get_first_value('SELECT human FROM incident_modes WHERE tenant=?', [tenant]) == 1,
+        'attempts' => db.get_first_value('SELECT COUNT(*) FROM incident_attempts WHERE tenant=?', [tenant]),
+        'tickets' => tickets }
     end
   end
 end

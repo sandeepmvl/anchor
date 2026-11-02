@@ -1,0 +1,9 @@
+{
+  "order": ["primary", "secondary", "primary"],
+  "retry_owners": ["resilience", "sdk"],
+  "reset": "per_request",
+  "window_seconds": 60,
+  "cap_units": 12,
+  "max_attempts": 4,
+  "total_seconds": 0.5
+}

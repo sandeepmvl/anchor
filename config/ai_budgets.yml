@@ -20,5 +20,11 @@
       "chat": {"limit": 80, "window_seconds": 60},
       "rag": {"limit": 60, "window_seconds": 60}
     }
+  },
+  "incident_window": {
+    "reset": "shared_fixed_window",
+    "window_seconds": 60,
+    "cap_units": 12,
+    "unit": "synthetic_attempt_units"
   }
 }

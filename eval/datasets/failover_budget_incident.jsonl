@@ -1,0 +1,4 @@
+{"id":"window","mutation":{"reset":"per_request"},"expected_error":"quota_window_misconfiguration"}
+{"id":"cycle","mutation":{"order":["primary","secondary","primary"]},"expected_error":"cyclic_routing"}
+{"id":"owners","mutation":{"retry_owners":["resilience","sdk"]},"expected_error":"conflicting_retry_ownership"}
+{"id":"human","scenario":"human_only","expected_provider_calls":0}

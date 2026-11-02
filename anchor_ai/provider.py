@@ -1,3 +1,30 @@
+def incident_policy_violations(policy):
+    errors = []
+    order = policy.get('order')
+    if (not isinstance(order, list) or not order
+            or any(not isinstance(n, str) or not n for n in order)
+            or len(order) != len(set(order))):
+        errors.append('cyclic_routing')
+    if policy.get('retry_owners') != ['resilience']:
+        errors.append('conflicting_retry_ownership')
+    if policy.get('reset') != 'shared_fixed_window' or policy.get('window_seconds') != 60:
+        errors.append('quota_window_misconfiguration')
+    for key in ('max_attempts', 'cap_units'):
+        if type(policy.get(key)) is not int or policy[key] <= 0:
+            errors.append('invalid_' + key)
+    value = policy.get('total_seconds')
+    if type(value) not in (int, float) or not 0 < value < float('inf'):
+        errors.append('invalid_total_seconds')
+    return errors
+
+
+def validate_incident_policy(policy):
+    errors = incident_policy_violations(policy)
+    if errors:
+        raise ValueError(','.join(errors))
+    return policy
+
+
 # Buffered routing is opt-in; existing provider selection below is unchanged.
 def routing_configuration(path='config/provider_routing.yml'):
     import yaml
@@ -22,6 +49,8 @@ def routing_configuration(path='config/provider_routing.yml'):
                 or not isinstance(d.get('capabilities'), list)
                 or type(d.get('evaluated')) is not bool):
             raise ValueError('invalid_routing_deployment')
+    if 'incident_policy' in c:
+        validate_incident_policy(c['incident_policy'])
     return c
 
 
@@ -68,6 +97,8 @@ class RoutingProvider:
         if production:
             raise ValueError('routing_release_evidence_missing')
         self.config = config or routing_configuration()
+        if 'incident_policy' in self.config:
+            validate_incident_policy(self.config['incident_policy'])
         if self.config.get('sdk_retries', 0) != 0:
             raise ValueError('nested_provider_retries')
         if any(getattr(a, 'max_retries', 0) != 0 for a in adapters.values()):
@@ -284,7 +315,6 @@ def configured_native_provider():
     raise ValueError('unsupported_native_provider')
 
 
-# Existing provider interfaces below remain available to earlier lessons.
 import asyncio
 import json
 import math
@@ -294,7 +324,6 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Protocol
-
 import httpx
 
 try:
@@ -350,10 +379,8 @@ class ReplayProvider:
                 self.expected_messages = [{'role': 'user', 'content': variant}]
                 self.sequence = [{'status': 200, 'body': {
                     'model': 'offline-synthetic',
-                    'choices': [{'message': {'content': json.dumps(record)},
-                                 'finish_reason': 'stop'}],
-                    'usage': {'prompt_tokens': 100, 'completion_tokens': 40,
-                              'total_tokens': 140}}}]
+                    'choices': [{'message': {'content': json.dumps(record)}, 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 40, 'total_tokens': 140}}}]
             except (IndexError, ValueError, TypeError, KeyError):
                 raise ProviderError('replay_miss') from None
         elif task == 'structured':
@@ -361,15 +388,12 @@ class ReplayProvider:
                 record = next(item for item in json.loads(STRUCTURED_RESPONSES.read_text())
                               if item['id'] == fixture_id)
                 system, ticket = render_structured(record['ticket'])
-                self.expected_messages = [{'role': 'system', 'content': system},
-                                          {'role': 'user', 'content': ticket}]
+                self.expected_messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': ticket}]
                 self.expected_format = TRIAGE_FORMAT
                 self.sequence = [{'status': 200, 'body': {
                     'model': 'gpt-4o-mini',
-                    'choices': [{'message': {'content': record['raw']},
-                                 'finish_reason': record['finish_reason']}],
-                    'usage': {'prompt_tokens': 100, 'completion_tokens': 20,
-                              'total_tokens': 120}}}]
+                    'choices': [{'message': {'content': record['raw']}, 'finish_reason': record['finish_reason']}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 20, 'total_tokens': 120}}}]
             except (KeyError, StopIteration, ValueError, TypeError):
                 raise ProviderError('replay_miss') from None
         elif task == 'reasoning':
@@ -633,7 +657,6 @@ class ModelReleaseReplayProvider(ReplayProvider):
         self.expected_messages = [{'role': 'user', 'content': selection.ticket}]
         self.expected_reasoning = None
         self.expected_format = None
-        self.fixture_latency_ms = None
         self.requests = []
         self.sequence = [{'status': 200, 'body': {
             'model': selection.candidate,
@@ -653,7 +676,6 @@ class UsageTap:
 
     def client(self):
         from contextlib import asynccontextmanager
-
         @asynccontextmanager
         async def opened():
             async def observe(response):
@@ -692,7 +714,6 @@ class SyntheticPrefixProvider:
         self.first_text()
         self.entries[key] = self.clock() + self.ttl_seconds
         total = units + tail
-        # Explicit synthetic extension; not a universal OpenAI Chat field.
         usage = dict(prompt_tokens=total, completion_tokens=12, total_tokens=total + 12,
                      prompt_tokens_details=dict(cached_tokens=units if hit else 0,
                                                cache_write_tokens=0 if hit else units))

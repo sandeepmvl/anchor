@@ -93,6 +93,9 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
       - run: python -m pip install -r anchor_ai/requirements.txt
+      - run: ruby test/integration/failover_budget_incident_test.rb
+      - run: python -m pytest -q anchor_ai/tests/test_failover_budget_incident.py
+      - run: python eval/regression_gate.py --incident-only
       - run: bin/rails db:prepare
       - run: bin/rails test
       - run: python -m pytest -q anchor_ai/tests

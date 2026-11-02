@@ -41,9 +41,7 @@ import sqlite3
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-
 import yaml
-
 from anchor_ai.contracts import AgentRequest, VerifiedExecution
 from anchor_ai.observability import span, trajectory_decision, model_call
 from anchor_ai.orchestration import select_flow, worker_for, propose
@@ -62,7 +60,7 @@ class ContextError(ValueError):
 
 
 class BoundedRuntime:
-    """Durable workflow. Adapters do not own authorization or checkpoints.
+    """Durable workflow; adapters do not own authorization or checkpoints.
 
     model.propose(strategy, plan, memory, max_tokens) -> (action, actual_tokens)
     retrieve(scope, message) -> scoped evidence dictionary
@@ -214,10 +212,9 @@ class BoundedRuntime:
                 return s
             self.event(s, 'memory_read', records=len(s['memory']))
             self.save(s)
-            ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'],
-                   'parent_span_id': None}
-            with span('python.bounded_agent', ctx=ctx, stage='agent',
-                      tenant_id=scope.tenant_id, conversation_id=scope.conversation_id):
+            ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'], 'parent_span_id': None}
+            with span('python.bounded_agent', ctx=ctx, stage='agent', tenant_id=scope.tenant_id,
+                      conversation_id=scope.conversation_id):
                 return await self.loop(scope, s)
 
     async def loop(self, scope, s):
@@ -238,11 +235,9 @@ class BoundedRuntime:
                 try:
                     worker = worker_for(s)
                     if worker is not None:
-                        self.event(s, 'worker_assignment', worker=worker,
-                                   action=s['plan'][s['phase']])
+                        self.event(s, 'worker_assignment', worker=worker, action=s['plan'][s['phase']])
                     with span('python.bounded_agent.model', stage='llm'):
-                        action, used = await asyncio.wait_for(
-                            model_call(propose, self.model, s, reserve),
+                        action, used = await asyncio.wait_for(model_call(propose, self.model, s, reserve),
                             timeout=self.policy['bounded']['call_timeout_seconds'])
                     if type(used) is not int or not 0 <= used <= reserve:
                         raise ValueError('invalid_usage')
@@ -284,11 +279,9 @@ class BoundedRuntime:
                 self.save(s)
             try:
                 with span('python.bounded_agent.tool',
-                          stage='retrieval' if action == 'retrieve' else 'tool',
-                          tool_name=action):
+                          stage='retrieval' if action == 'retrieve' else 'tool', tool_name=action):
                     if action == 'retrieve':
-                        observation = await asyncio.wait_for(
-                            self.retrieve(scope, s['message']),
+                        observation = await asyncio.wait_for(self.retrieve(scope, s['message']),
                             timeout=self.policy['bounded']['call_timeout_seconds'])
                         if (observation['tenant_id'] != scope.tenant_id
                                 or any(h.get('tenant_id', scope.tenant_id) != scope.tenant_id
@@ -311,8 +304,7 @@ class BoundedRuntime:
                     self.event(s, 'trajectory', decision=trajectory_decision(
                         kind='tool', tool=action, expected_tool=s['plan'][s['phase']],
                         argument_fingerprint=digest, expected_argument_fingerprint=digest,
-                        evidence=[m['action'] for m in s['memory']],
-                        claim='evidence_available',
+                        evidence=[m['action'] for m in s['memory']], claim='evidence_available',
                         confirmed=bool(s['approval'] and s['approval']['digest'] == s['digest']),
                         dry_run=False, reversible=False))
             except Exception:
@@ -334,7 +326,7 @@ class BoundedRuntime:
 
 
 def replay_trajectory_fixture(fixture, route, *, delegated=False):
-    """Offline evidence adapter. No tools, model, authorization, or money movement."""
+    """Offline evidence adapter; no tools, authorization, or money movement."""
     events = []
     ctx = {'trace_id': hashlib.sha256(fixture['id'].encode()).hexdigest()[:32],
            'request_id': fixture['id'], 'parent_span_id': None}
@@ -349,23 +341,20 @@ def replay_trajectory_fixture(fixture, route, *, delegated=False):
                     digest = argument_fingerprint(raw.get('arguments', fixture['arguments']))
                     expected = argument_fingerprint(fixture['arguments'])
                     decision = trajectory_decision(
-                        kind=raw['kind'], tool=tool,
-                        expected_tool=raw.get('expected_tool', 'none'),
+                        kind=raw['kind'], tool=tool, expected_tool=raw.get('expected_tool', 'none'),
                         argument_fingerprint=digest, expected_argument_fingerprint=expected,
                         evidence=raw.get('evidence', []), claim=raw['claim'],
-                        confirmed=raw.get('confirmed', False), dry_run=True,
-                        reversible=False, human_required=raw.get('human_required', False),
-                        handoff_complete=raw.get('handoff_complete', False),
-                        success=raw.get('success', True))
+                        confirmed=raw.get('confirmed', False), dry_run=True, reversible=False,
+                        human_required=raw.get('human_required', False),
+                        handoff_complete=raw.get('handoff_complete', False), success=raw.get('success', True))
                     events.append(dict(sequence=len(events) + 1, subsystem='trajectory',
                                        tenant_id=fixture['tenant_id'], decision=decision))
     return dict(endpoint='bounded_agent', offline_fixture=True,
-                tenant_id=fixture['tenant_id'], events=events,
-                outcome_correct=fixture['outcome_correct'])
+                tenant_id=fixture['tenant_id'], events=events, outcome_correct=fixture['outcome_correct'])
 
 
 def voice_authority():
-    """Voice is a read-only channel; prose cannot grant a tool approval."""
+    """Voice is read-only; prose cannot grant a tool approval."""
     return {'confirmed': False, 'dispatch_allowed': False, 'approval_required': True}
 
 
@@ -373,7 +362,7 @@ class SemanticAnswerRuntime:
     """Shared read-only boundary; never invoke financial tools from generate.
 
     verify(token) returns server-verified identity with tenant_id and role.
-    resolve(identity, query, path) synchronously authorizes and returns Snapshot.
+    resolve(identity, query, path) authorizes and returns Snapshot.
     embed(query, snapshot) returns a vector in snapshot.embedding_version.
     await generate(identity, query, snapshot) returns Generated provenance.
     """
@@ -394,14 +383,12 @@ class SemanticAnswerRuntime:
         if (identity is None or type(identity.tenant_id) is not int
                 or identity.tenant_id <= 0 or not identity.role):
             raise ContextError('cache_identity_rejected')
-
         def fresh():
             s = self.resolve(identity, query, path)
             if (not isinstance(s, Snapshot) or s.tenant_id != identity.tenant_id
                     or s.role != identity.role or s.answer_path != path):
                 raise ContextError('cache_scope_rejected')
             return s
-
         snapshot = fresh()
         eligible = self.cache.eligible(snapshot, query) == 'public_faq'
         vector = self.embed(query, snapshot) if eligible else None
@@ -423,7 +410,7 @@ class SemanticAnswerRuntime:
 
 def create_batch_runtime(*, adapter, verify, path, config_path='config/batching.yml',
                          emit=None, production=False, evidence=None, tokenizer=None):
-    """Composition seam; authorization and production evidence remain mandatory."""
+    """Composition seam; authorization and production evidence stay mandatory."""
     from anchor_ai.batching import BatchRuntime, Scheduler, configuration
     scheduler = Scheduler(adapter, configuration(config_path), emit=emit)
     return BatchRuntime(scheduler, verify=verify, path=path, production=production,
@@ -447,7 +434,7 @@ def verified_cost_scope(collector, *, verify, token, feature, role, model,
 
 @contextmanager
 def verified_quota_scope(*, verify, token, client_for, feature, bound):
-    """client_for binds a verified identity to the Rails authority context."""
+    """client_for binds verified identity to the Rails authority context."""
     from anchor_ai.quota_client import quota_scope
     if not token:
         raise ContextError('missing_execution_context')
@@ -466,3 +453,174 @@ def initialize_provider_resilience(router, *, database, **options):
         raise ValueError('provider_resilience_already_initialized')
     options.setdefault('emit', emit_provider_resilience)
     return router.enable_resilience(database=database, **options)
+
+
+# Incident composition: deterministic offline sends, existing product retry loop.
+INCIDENT_POLICY = Path('labs/failover-budget-incident/broken_policy.json')
+INCIDENT_DATASET = Path('eval/datasets/failover_budget_incident.jsonl')
+
+
+def corrected_incident_policy():
+    from anchor_ai.provider import routing_configuration
+    return copy.deepcopy(routing_configuration()['incident_policy'])
+
+
+class IncidentClock:
+    def __init__(self):
+        self.now = 0.0
+    def __call__(self):
+        return self.now
+    async def sleep(self, delay):
+        self.now += delay
+
+
+class IncidentRouter:
+    """Single-send fixture; never selects a live adapter."""
+    def __init__(self, authority, clock, order):
+        self.authority, self.clock = authority, clock
+        self.config = dict(order=order, logical_model='incident-fixture', deployments={
+            name: dict(model='incident-fixture', region='eu') for name in order})
+        self.calls, self.served_by = [], None
+
+    def eligible(self, name, tenant_id, payload):
+        return tenant_id == self.authority.tenant and name in self.config['order']
+
+    async def physical(self, name, request, payload):
+        import httpx
+        import uuid
+        from anchor_ai.provider import ProviderError
+        ticket, context = payload['ticket'], payload['context']
+        reservation = self.authority.call('reserve', ticket=ticket, context=context,
+                                          attempt_id=uuid.uuid4().hex, bound=1)
+        if not reservation['allowed']:
+            raise ProviderError(reservation['reason'], status=503)
+        self.clock.now += .02
+        self.calls.append(dict(ticket=ticket, provider=name, attempt=len(self.calls) + 1,
+            window=reservation['window'], used_before=reservation['used_before'],
+            input_tokens=128, active_concurrency=1,
+            deadline_remaining=round(.5 - self.clock.now, 4)))
+        # Admission and this synthetic send have no intervening await.
+        # This does not establish race-free distributed live dispatch.
+        return httpx.Response(503 if name == 'primary' else 200,
+                              json={'usage': {'prompt_tokens': 128}})
+
+
+class IncidentRuntime:
+    def __init__(self, directory, policy=None, *, production=False):
+        from anchor_ai.provider import validate_incident_policy
+        from anchor_ai.quota_client import IncidentAuthority
+        from anchor_ai.resilience import CircuitStore, ResilienceBoundary, configuration
+        if production:
+            raise ValueError('incident_release_evidence_missing')
+        policy = corrected_incident_policy() if policy is None else policy
+        validate_incident_policy(policy)
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.authority = IncidentAuthority(self.directory / 'authority.sqlite3')
+        self.clock = IncidentClock()
+        self.router = IncidentRouter(self.authority, self.clock, policy['order'])
+        resilience = configuration()
+        resilience['max_attempts'] = policy['max_attempts']
+        resilience['total_seconds'] = policy['total_seconds']
+        self.events = []
+        self.boundary = ResilienceBoundary(self.router,
+            CircuitStore(self.directory / 'circuits.sqlite3', resilience, clock=self.clock),
+            resilience, clock=self.clock, sleep=self.clock.sleep,
+            jitter=lambda: 0, emit=self.events.append)
+
+    async def ticket(self, ticket, context):
+        import httpx
+        from anchor_ai.provider import ProviderError
+        self.clock.now = 0
+        self.authority.call('queue', ticket=ticket, context=context)
+        request = httpx.Request('POST', 'https://offline.invalid/incident',
+                               json=dict(ticket=ticket, context=context))
+        try:
+            response = await self.boundary.route(request, self.authority.tenant)
+            return dict(ticket=ticket, status=response.status_code)
+        except (ProviderError, TimeoutError):
+            self.authority.call('handoff', ticket=ticket, context=context)
+            return dict(ticket=ticket, status='human')
+
+
+def broken_trace():
+    pending, rows, clock, cumulative = [], [], 0.0, 0
+    for round_number in range(6):
+        pending.append(dict(ticket='A17-' + str(round_number), arrival=round_number))
+        clock = max(clock, round_number)
+        latencies = []
+        for ticket in pending:
+            clock += .5
+            cumulative += 1
+            latencies.append(clock - ticket['arrival'])
+            rows.append(dict(event='attempt', ticket=ticket['ticket'], provider='primary',
+                reset='per_request', used_before=0, window=0, breaker='closed',
+                input_tokens=128, active_concurrency=1, deadline_remaining=None))
+        rows.append(dict(event='series', round=round_number + 1, spend_units=len(pending),
+            cumulative_units=cumulative, max_attempt_latency_s=max(latencies), pending=len(pending)))
+    assert cumulative == 21
+    return rows
+
+
+async def recovered_trace(directory, human=False):
+    runtime = IncidentRuntime(directory)
+    context = dict(message='Where is order A17?', evidence=['order:A17'],
+                   history=['customer asked for delivery status'], proposed_action='lookup_order')
+    series = []
+    if human:
+        runtime.authority.call('queue', ticket='queued-A17', context=context)
+        runtime.authority.call('human_only')
+    for index in range(6):
+        before = len(runtime.router.calls)
+        result = await runtime.ticket('A17-' + str(index), copy.deepcopy(context))
+        snapshot = runtime.authority.call('snapshot')
+        series.append(dict(event='series', round=index + 1,
+            spend_units=len(runtime.router.calls) - before, cumulative_units=snapshot['used'],
+            max_attempt_latency_s=round(runtime.clock.now, 4), status=result['status']))
+    snapshot = runtime.authority.call('snapshot')
+    assert snapshot['used'] <= 12
+    if human:
+        assert not runtime.router.calls
+        assert all(t['state'] == 'human' and t['context'] == context for t in snapshot['tickets'])
+    for call in runtime.router.calls:
+        call.update(event='attempt')
+    return dict(calls=runtime.router.calls, decisions=runtime.events, series=series,
+                authority=snapshot,
+                limitation='Offline one-host admission only; hosted dispatch and multi-host coordination not verified')
+
+
+def incident_regression_cases():
+    from anchor_ai.provider import incident_policy_violations
+    cases = [json.loads(line) for line in INCIDENT_DATASET.read_text().splitlines() if line.strip()]
+    assert {c['id'] for c in cases} == {'window', 'cycle', 'owners', 'human'}
+    for case in cases:
+        if case['id'] == 'human':
+            assert case['scenario'] == 'human_only' and case['expected_provider_calls'] == 0
+            continue
+        policy = corrected_incident_policy()
+        policy.update(case['mutation'])
+        assert case['expected_error'] in incident_policy_violations(policy)
+    return len(cases)
+
+
+def incident_main():
+    import argparse
+    import tempfile
+    from anchor_ai.provider import incident_policy_violations
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', choices=['broken', 'validate', 'corrected', 'human', 'all'])
+    mode = parser.parse_args().mode
+    if mode in ('broken', 'all'):
+        for row in broken_trace():
+            print(json.dumps(row))
+    if mode in ('validate', 'all'):
+        errors = incident_policy_violations(json.loads(INCIDENT_POLICY.read_text()))
+        assert errors == ['cyclic_routing', 'conflicting_retry_ownership', 'quota_window_misconfiguration']
+        print(json.dumps(dict(event='planted_policy_rejected', errors=errors,
+                              regression_cases=incident_regression_cases())))
+    for scenario in ('corrected', 'human'):
+        if mode in (scenario, 'all'):
+            with tempfile.TemporaryDirectory() as directory:
+                report = asyncio.run(recovered_trace(directory, human=scenario == 'human'))
+                print(json.dumps(dict(event=scenario, **report)))
+    print('Offline smoke only: provider network, hosted quality, and multi-host emergency dispatch not verified; production release remains blocked.')

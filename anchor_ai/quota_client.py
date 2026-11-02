@@ -10,7 +10,6 @@ import subprocess
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-
 import httpx
 
 ACTIVE_QUOTA = contextvars.ContextVar('anchor_quota', default=None)
@@ -111,11 +110,7 @@ def reserve_attempt():
 
 
 async def admitted_call(call, *args, actual=None, **kwargs):
-    """call must represent ONE physical attempt, never an SDK retry loop.
-
-    actual(result) is a trusted pricing function. Without it, retain the bound.
-    Exceptions, cancellation, and uncertain usage never release reservations.
-    """
+    """One physical attempt; uncertain usage never releases reservations."""
     client, reservation = reserve_attempt()
     result = await call(*args, **kwargs)
     if actual is not None:
@@ -127,10 +122,9 @@ async def admitted_call(call, *args, actual=None, **kwargs):
 
 
 class AdmittedBatchAdapter:
-    """scope(key, records) is trusted composition, not customer configuration.
+    """Trusted scope reserves the homogeneous batch's maximum charge.
 
-    The scope must reserve the whole homogeneous batch's maximum charge.
-    An adapter that internally retries must put admission inside each retry.
+    An adapter that internally retries must admit inside each retry.
     """
     def __init__(self, adapter, *, scope):
         self.adapter, self.scope = adapter, scope
@@ -149,10 +143,10 @@ class AdmittedBatchAdapter:
 
 
 class AdmittedProvider:
-    """HTTP request hooks admit each send, including application retries.
+    """HTTP hooks admit each send, including application retries.
 
-    The trusted composition supplies a bound covering the enforced payload.
-    Streaming retains its reservation until a final-usage adapter reconciles it.
+    Trusted composition supplies a bound covering the enforced payload.
+    Streaming retains its reservation until final usage is reconciled.
     """
     def __init__(self, provider):
         self.provider = provider
@@ -162,7 +156,6 @@ class AdmittedProvider:
 
     def client(self):
         from contextlib import asynccontextmanager
-
         @asynccontextmanager
         async def opened():
             async def admit(request):
@@ -182,8 +175,30 @@ def require_quota_release(*, production, fixture, evidence=None):
 
 
 def retain_uncertain_attempt(collector, attempt_id):
-    """Record uncertainty only; never release or settle the authority's bound."""
+    """Record uncertainty only; never release the authority's bound."""
     from anchor_ai.observability import safe_id
     if safe_id(attempt_id) is None:
         raise QuotaDenied('quota_reservation_invalid')
     collector.unresolved.append(attempt_id)
+
+
+class IncidentAuthority:
+    """Trusted local replay bridge, not a production authenticated transport."""
+    def __init__(self, database, tenant=1):
+        self.database, self.tenant = str(database), tenant
+
+    def call(self, operation, **arguments):
+        payload = dict(database=self.database, operation=operation,
+                       arguments=dict(tenant=self.tenant, **arguments))
+        try:
+            result = subprocess.run(
+                ['ruby', 'labs/failover-budget-incident/incident_replay.rb', '--rpc'],
+                input=json.dumps(payload), text=True, capture_output=True, timeout=4,
+                check=True)
+            answer = json.loads(result.stdout)
+            if not isinstance(answer, dict) or 'error' in answer:
+                raise ValueError('invalid_authority_response')
+            return answer
+        except Exception:
+            from anchor_ai.provider import ProviderError
+            raise ProviderError('quota_authority_unavailable', status=503) from None
