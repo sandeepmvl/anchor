@@ -115,6 +115,28 @@ class CircuitStore:
                      leases={}, generation=s['generation'] + (1 if probe else 0))
 
 
+class CacheBypassBreaker:
+    """Tenant-scoped optional-cache breaker; never changes provider circuits.
+
+    This process-local control must be delivered to each worker by a deployment
+    control plane. It is not a multi-host incident authority.
+    """
+    def __init__(self, *, clock=time.monotonic):
+        self.clock = clock
+        self.until = {}
+
+    def trip(self, tenant_id, *, seconds, actor):
+        if (type(tenant_id) is not int or tenant_id <= 0
+                or type(seconds) not in (int, float)
+                or not math.isfinite(seconds) or not 0 < seconds <= 300
+                or not isinstance(actor, str) or not actor.strip()):
+            raise ValueError('invalid_cache_bypass')
+        self.until[tenant_id] = self.clock() + seconds
+
+    def bypass(self, tenant_id):
+        return self.clock() < self.until.get(tenant_id, 0)
+
+
 def circuit_key(router, name):
     d = router.config['deployments'][name]
     return json.dumps([name, d['model'], d['region']], separators=(',', ':'))

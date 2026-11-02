@@ -43,6 +43,27 @@ class AiReleaseRegistry
     bundle
   end
 
+  # The registry revision is persisted with the release pointer, not in process ENV.
+  def registry_revision(row)
+    event = row.audit.reverse.find { |entry| entry['registry_bundle'] }
+    event ? event.fetch('registry_bundle') : row.stable
+  end
+
+  def version_consistency!
+    row = pointer
+    compatible!(row, row.stable)
+    raise ArgumentError, 'prompt_version_registry_diverged' unless registry_revision(row) == row.stable
+    { 'bundle_id' => row.stable, 'generation' => row.generation,
+      'registry_revision' => registry_revision(row), 'consistent' => true }
+  end
+
+  def resync(expected_generation:, actor:)
+    mutate(expected_generation: expected_generation, actor: actor, action: 'resync') do |row|
+      compatible!(row, row.stable)
+    end
+    version_consistency!
+  end
+
   def mutate(expected_generation:, actor:, action:)
     raise ArgumentError, 'audit_actor_required' if actor.to_s.strip.empty?
     row = pointer
@@ -50,6 +71,9 @@ class AiReleaseRegistry
       raise ArgumentError, 'stale_generation' unless row.generation == expected_generation
       before = row.attributes.slice('stable', 'candidate', 'canary_percent')
       yield row
+      # The serving registry pointer participates in the same locked transaction.
+      row.audit = row.audit + [{ 'registry_bundle' => row.stable,
+        'actor' => actor, 'action' => 'registry_sync' }]
       row.generation += 1
       row.audit = row.audit + [{ 'actor' => actor, 'action' => action,
         'at' => Time.now.utc.iso8601, 'generation' => row.generation,
@@ -75,10 +99,12 @@ class AiReleaseRegistry
     raise ArgumentError, 'conversation_required' if conversation_id.to_s.empty?
     row = pointer # One SELECT reads the entire routing snapshot, including bundles.
     bucket = Digest::SHA256.hexdigest("#{@tenant_id}:#{conversation_id}").to_i(16) % 100
-    id = row.candidate && bucket < row.canary_percent ? row.candidate : row.stable
+    id = row.candidate && bucket < row.canary_percent ? row.candidate : registry_revision(row)
     bundle = compatible!(row, id)
     JSON.parse(JSON.generate({ 'bundle_id' => id, 'generation' => row.generation,
-      'tenant_id' => @tenant_id, 'bundle' => bundle })).freeze
+      'tenant_id' => @tenant_id, 'bundle' => bundle,
+      'active_bundle_id' => row.stable, 'registry_revision' => registry_revision(row),
+      'cache_namespace' => id })).freeze
   end
 
   def with_request(conversation_id:)

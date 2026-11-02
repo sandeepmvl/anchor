@@ -67,6 +67,15 @@ class PromptRegistry
     Thread.current[:anchor_reply_release] = prior
   end
 
+  def self.release_provenance
+    pinned = Thread.current[:anchor_reply_release]
+    raise ArgumentError, 'release_snapshot_required' unless pinned
+    { 'prompt_version' => pinned.fetch('bundle').fetch('prompt'),
+      'registry_revision' => pinned.fetch('registry_revision'),
+      'active_bundle_id' => pinned.fetch('active_bundle_id'),
+      'cache_namespace' => pinned.fetch('cache_namespace') }.freeze
+  end
+
   def self.active_reply
     pinned = Thread.current[:anchor_reply_release]
     version = pinned ? pinned.fetch('bundle').fetch('prompt') : ENV.fetch('ANCHOR_REPLY_PROMPT_VERSION', 'chat:v3')

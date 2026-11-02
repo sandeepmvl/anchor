@@ -180,6 +180,24 @@ def release_bundle_fixture_gate(target):
                 quality_basis='constructed_exact_match_and_recorded_judge_not_live_quality')
 
 
+def stale_release_probe(response, expected, *, production=True):
+    """Exact golden policy assertion plus producing-version consistency.
+
+    Constructed responses are diagnostic only. There is no trusted live probe
+    importer here, so this helper cannot authorize a production release.
+    """
+    fields = ('answer', 'prompt_version', 'model_version', 'index_version',
+              'registry_revision', 'cache_namespace', 'active_bundle_id')
+    errors = [name + ':mismatch' for name in fields
+              if name not in expected or response.get(name) != expected[name]]
+    if response.get('http_status') != 200:
+        errors.append('http_failed')
+    if production:
+        errors.append('live_version_probe_evidence_required')
+    return dict(passed=not errors, errors=errors, deployment_approved=False,
+                quality_basis='offline_exact_policy_and_version_assertions')
+
+
 def save(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

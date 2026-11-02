@@ -195,8 +195,14 @@ class TenantSemanticCache(SemanticCache):
         return super().store(snapshot, query, vector, generated)
 
 
-async def with_answer_cache(cache, snapshot, query, vector, generate):
+async def with_answer_cache(cache, snapshot, query, vector, generate, *, breaker=None):
     """Generate returns (Generated, provider_report); eligibility stays explicit."""
+    check_bound_tenant(snapshot.tenant_id)
+    if breaker is not None and breaker.bypass(snapshot.tenant_id):
+        cache.event('bypass', 'operator_breaker', 'none', 0, cache.clock())
+        generated, evidence = await generate()
+        return generated.text, dict(evidence, answer_cache_hit=False,
+                                    cache_bypass=True)
     answer = cache.lookup(snapshot, query, vector)
     if answer is not None:
         return answer, dict(answer_cache_hit=True, provider_called=False,
