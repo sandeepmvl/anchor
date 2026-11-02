@@ -121,3 +121,8 @@ async def run_conversation(ticket, memory, *, run_key='refund-123-v1',
             'rounds': len(replies), 'max_round': max_round,
             'stop_reason': result.stop_reason, 'summary': saved['summary'],
             'restored_summaries': len(prior)}
+
+
+def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
+    from .orchestration import dispatch_specialist as guarded
+    return guarded(context, trusted, invoke, boundary=boundary)

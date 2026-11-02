@@ -201,10 +201,28 @@ class EscalationService:
 
 def graph_handoff(ticket, classification):
     from .pii import redact_graph
+    from .checkpoints import action_key
     return redact_graph({
+        'tenant_id': ticket['tenant_id'],
+        'conversation_id': ticket['conversation_id'],
+        'provenance': action_key(ticket['tenant_id'], ticket['conversation_id'],
+                                 ticket['order_id'], ticket['amount_cents']),
         'order_id': ticket['order_id'], 'amount_cents': ticket['amount_cents'],
         'classification': classification, 'messages': ticket['messages'],
         'evidence': ticket['evidence'], 'plan_position': 'human_approval_checkpoint',
         'remaining_budget': 4,
         'decision_summary': 'Refund exceeds automatic limit; review exact pending action.',
     })
+
+
+def incomplete_handoff(trusted, error, *, boundary):
+    # Only application-held context is eligible for human transfer. Never
+    # forward the conflicting candidate or unrestricted provider output.
+    from .contracts import HANDOFF_KEYS
+    source = trusted if isinstance(trusted, dict) else {}
+    context = {key: source[key] for key in HANDOFF_KEYS if key in source}
+    return {'status': 'human_escalation', 'human_handoff': True,
+            'reason': error.reason, 'invalid_keys': list(error.keys),
+            'boundary': boundary, 'tool_calls': [], 'do_not_retry': True,
+            'context': redact(context),
+            'next_action': 'authenticated human investigation'}

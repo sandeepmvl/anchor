@@ -87,3 +87,8 @@ class NativeAgent:
                             'blocked': True}
                 items = result_messages('responses', results)
         raise RuntimeError('native_tool_turn_limit')
+
+
+def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
+    from .orchestration import dispatch_specialist as guarded
+    return guarded(context, trusted, invoke, boundary=boundary)

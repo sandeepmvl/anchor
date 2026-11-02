@@ -27,6 +27,7 @@ class RefundState(TypedDict, total=False):
     approved: bool
     result: dict
     reply: str
+    handoff_failure: dict
     audit: Annotated[list[str], operator.add]
 
 
@@ -81,6 +82,11 @@ def workflow(path, thread, token, client=None):
 
     def specialist(state):
         print('ENTER specialist', flush=True)
+        trusted = graph_handoff(state['ticket'], state['classification'])
+        admission = dispatch_specialist(state.get('context'), trusted,
+                                        lambda context: {'admitted': True})
+        if admission.get('human_handoff'):
+            return {'handoff_failure': admission, 'audit': ['specialist']}
         # Even ordinary refunds use this explicit approval gate in this increment.
         store.approval(thread, token, state['action_key'])
         ticket = state['ticket']
@@ -146,6 +152,8 @@ def workflow(path, thread, token, client=None):
         return {'result': result['payload'], 'reply': reply, 'audit': ['specialist']}
 
     def handoff(state):
+        if state.get('handoff_failure'):
+            return {'audit': ['escalation']}
         store.complete(thread, token, state['action_key'])
         return {'audit': ['escalation']}
 
@@ -194,6 +202,11 @@ def resume_refund(path, thread, token):
             raise PermissionError('approval_replay_rejected')
         if before.values['ticket']['tenant_id'] != actor_claims(token)['tenant_id']:
             raise PermissionError('tenant_mismatch')
+        trusted = graph_handoff(before.values['ticket'], before.values['classification'])
+        admission = dispatch_specialist(before.values.get('context'), trusted,
+                                        lambda context: {'admitted': True}, boundary='resume')
+        if admission.get('human_handoff'):
+            return admission
         if before.next == ('human_approval_checkpoint',):
             graph.invoke(Command(resume=approval['id']), config)
         else:
@@ -210,3 +223,8 @@ def policy_query_tool(retriever, claims, client=None, **options):
     from anchor_ai.rag import published_query_engine_tool
     return published_query_engine_tool(retriever, claims['tenant_id'],
                                        client=client, **options)
+
+
+def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
+    from .orchestration import dispatch_specialist as guarded
+    return guarded(context, trusted, invoke, boundary=boundary)

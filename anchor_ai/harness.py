@@ -62,3 +62,8 @@ class HarnessAdapter:
                 return await self.runtime.execute(token, request)
         finally:
             ACTIVE_HOOK.reset(active)
+
+
+def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
+    from .orchestration import dispatch_specialist as guarded
+    return guarded(context, trusted, invoke, boundary=boundary)

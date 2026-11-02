@@ -202,3 +202,49 @@ class DelegatedResult(BaseModel):
     trace_id: str
     status: str
     handoff: dict | None
+
+
+HANDOFF_KEYS = ('tenant_id', 'conversation_id', 'order_id', 'amount_cents',
+                'provenance', 'messages', 'evidence')
+
+
+class HandoffViolation(ValueError):
+    """Machine-readable diagnostics; never contains ticket text or identifiers."""
+    def __init__(self, reason, keys=()):
+        self.reason = reason
+        self.keys = tuple(keys)
+        super().__init__(reason + ':' + ','.join(self.keys))
+
+
+def validate_specialist_handoff(context, trusted, *, boundary='dispatch'):
+    """Trusted is application-held state, not another field in model output.
+
+    Revalidate after persistence and on resume. Never fill missing fields from
+    defaults, conversation prose, provider response IDs, or model guesses.
+    """
+    import copy
+    import re
+    if boundary not in ('dispatch', 'resume'):
+        raise ValueError('invalid_handoff_boundary')
+    if not isinstance(context, dict) or not isinstance(trusted, dict):
+        raise HandoffViolation('handoff_missing')
+    for value in (trusted, context):
+        missing = [key for key in HANDOFF_KEYS if key not in value]
+        if missing:
+            raise HandoffViolation('handoff_missing', missing)
+        for key in ('tenant_id', 'conversation_id', 'amount_cents'):
+            if type(value[key]) is not int or value[key] <= 0:
+                raise HandoffViolation('handoff_invalid', [key])
+        if (not isinstance(value['order_id'], str)
+                or not re.fullmatch(r'[A-Z][A-Z0-9]{1,30}', value['order_id'])):
+            raise HandoffViolation('handoff_invalid', ['order_id'])
+        if not isinstance(value['provenance'], str) or not value['provenance'].strip():
+            raise HandoffViolation('handoff_invalid', ['provenance'])
+        for key in ('messages', 'evidence'):
+            if (not isinstance(value[key], list) or not value[key]
+                    or not all(isinstance(v, str) and v.strip() for v in value[key])):
+                raise HandoffViolation('handoff_invalid', [key])
+    changed = [key for key in HANDOFF_KEYS if context[key] != trusted[key]]
+    if changed:
+        raise HandoffViolation('handoff_conflict', changed)
+    return copy.deepcopy(context)

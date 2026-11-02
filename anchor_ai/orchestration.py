@@ -217,3 +217,18 @@ async def run_milestone(runtime, token, request):
     if not token:
         raise ValueError('missing_execution_context')
     return await runtime.execute(token, copy.deepcopy(request))
+
+
+def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
+    """Synchronous admission boundary; invoke may return an awaitable.
+
+    Callers must obtain trusted from authenticated, durable application state,
+    independently of the proposed transfer. This never authorizes a tool.
+    """
+    from .contracts import HandoffViolation, validate_specialist_handoff
+    from .escalation import incomplete_handoff
+    try:
+        safe = validate_specialist_handoff(context, trusted, boundary=boundary)
+    except HandoffViolation as error:
+        return incomplete_handoff(trusted, error, boundary=boundary)
+    return invoke(safe)
