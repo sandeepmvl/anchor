@@ -1,3 +1,7 @@
+# These settings govern screenshot analysis, not PDF rasterization.
+# PDF extraction uses anchor_ai.ocr.Limits and explicit engine selection.
+# Production PDF ingestion defaults to tesseract and refuses fixture evidence.
+# Managed OCR and live document vision remain unverified and fail closed.
 provider: offline
 external_calls: false
 model: gpt-4o-mini

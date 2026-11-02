@@ -1,3 +1,9 @@
+def extract_document(raw, *, engine='tesseract', limits=None, vision=None):
+    """Internal worker entry point; authorization belongs to the ingestion caller."""
+    from anchor_ai.llm_client import extract_document as extract
+    return extract(raw, engine=engine, limits=limits, vision=vision)
+
+
 from anchor_ai.contracts import AgentRequest
 from anchor_ai.runtime import ContextError
 import hmac

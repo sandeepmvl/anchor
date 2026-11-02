@@ -113,6 +113,27 @@ def ingest_graph_records(db, tenant_id, path, client=None):
     return results
 
 
+def ingest_scanned_pdf(db, tenant_id, path, *, client=None, engine='tesseract',
+                       limits=None, allow_fixture=False, vision=None):
+    from .document_loader import load_document
+    from .index_maintenance import maintain_document, valid_tenant
+    valid_tenant(tenant_id)
+    path = Path(path).resolve(strict=True)
+    if path.suffix.lower() != '.pdf':
+        raise ValueError('expected_scanned_pdf')
+    document = load_document(path, ocr_engine=engine, ocr_limits=limits,
+                             allow_fixture=allow_fixture, vision=vision)
+    # Extraction and all limits complete before the first index write.
+    metadata = {
+        'title': document.title,
+        'tenant_id': tenant_id,
+        'pages': [{'start': unit.start, 'end': unit.end, **unit.metadata}
+                  for unit in document.units],
+    }
+    return maintain_document(db, tenant_id, path.name, document.text, metadata,
+                             'ocr-page-v1', str(path.parent), client=client)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['stage', 'ingest'])

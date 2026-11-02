@@ -1,3 +1,9 @@
+def extract_document(raw, *, engine='tesseract', limits=None, vision=None):
+    """OCR is separate from chat generation and never inherits its live provider."""
+    from anchor_ai.ocr import extract_pdf
+    return extract_pdf(raw, engine=engine, limits=limits, vision=vision)
+
+
 import asyncio
 import json
 import os
@@ -442,7 +448,7 @@ class LlmClient:
                 source.context_max_tokens = limit
                 result = await child.complete_result(source, max_tokens=limit)
                 if result.finish_reason != 'stop':
-                    raise ProviderError('invalid_provider_response')
+                    raise ValueError('incomplete_context_summary')
                 return result.reply
         with span('llm.call' if False else 'context.assemble', stage='context', **contract_fields(contract)) as telemetry:
             assembly = await assemble(contract, str(prompt), history, state, summarize)

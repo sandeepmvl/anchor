@@ -1,3 +1,9 @@
+def recorded_document_vision(expected_pdf, response_path):
+    """Recorded document transcription, separate from screenshot issue summaries."""
+    from anchor_ai.ocr import RecordedVision
+    return RecordedVision(expected_pdf, response_path)
+
+
 import base64
 import binascii
 import json

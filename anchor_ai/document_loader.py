@@ -50,9 +50,9 @@ class KnowledgeHTML(HTMLParser):
             self.tag, self.buffer = None, []
 
 
-def load_document(path):
+def load_document(path, *, ocr_engine='tesseract', ocr_limits=None,
+                  allow_fixture=False, vision=None):
     path = Path(path)
-    raw = path.read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
     suffix = path.suffix.lower()
     title = path.stem
     pieces, units = [], []
@@ -71,6 +71,25 @@ def load_document(path):
         cursor += len(text)
         units.append(Unit(start, cursor, metadata))
 
+    if suffix == '.pdf':
+        from .ocr import extract_pdf
+        from .pii import prepare
+        result = extract_pdf(path.read_bytes(), engine=ocr_engine,
+                             limits=ocr_limits, vision=vision)
+        for page in result.require_evidence(allow_fixture=allow_fixture):
+            append(prepare(page.text), {
+                'page': page.page,
+                'source_sha256': result.source_sha256,
+                'extraction_engine': result.engine,
+                'extraction_quality': page.quality,
+                'extraction_warnings': list(page.warnings),
+                'fixture': result.fixture,
+            })
+        if not units:
+            raise ValueError('Document contains no accepted OCR units')
+        return Document(path.as_posix(), title, ''.join(pieces), tuple(units))
+
+    raw = path.read_text(encoding='utf-8').replace('\r\n', '\n').replace('\r', '\n')
     if suffix == '.md':
         headings = list(re.finditer(r'^#{1,6}\s+(.+)$', raw, re.M))
         if headings:
@@ -105,7 +124,7 @@ def load_document(path):
             end = turns[i + 1].start() if i + 1 < len(turns) else len(raw)
             append(raw[match.start():end], {'speaker': match.group(1)})
     else:
-        raise ValueError('Supported sources: .md, .html, .txt')
+        raise ValueError('Supported sources: .md, .html, .txt, .pdf')
     if not units:
         raise ValueError('Document contains no supported units')
     return Document(path.as_posix(), title, ''.join(pieces), tuple(units))

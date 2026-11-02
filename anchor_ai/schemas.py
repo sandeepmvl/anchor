@@ -1,3 +1,6 @@
+# Share the OCR contract rather than copying its page and evidence semantics.
+from anchor_ai.ocr import Page as OcrPage, Extraction as OcrExtraction
+
 import json
 import math
 from typing import Literal

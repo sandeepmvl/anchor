@@ -1,3 +1,6 @@
+# OCR offline recognition and PDF fixture generation use the standard library.
+# Local OCR requires poppler-utils, tesseract-ocr and tesseract-ocr-eng in Dockerfile.
+
 fastapi
 pydantic>=2,<3
 uvicorn
