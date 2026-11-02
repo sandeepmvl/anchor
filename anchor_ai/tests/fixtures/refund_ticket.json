@@ -1,0 +1,8 @@
+{
+  "run_id": "refund-104",
+  "operation": "start",
+  "ticket_type": "multi-step refund",
+  "message": "Please check order A104 and refund 300 cents if policy permits.",
+  "order_id": "A104",
+  "amount_cents": 300
+}

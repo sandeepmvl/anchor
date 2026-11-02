@@ -1,3 +1,5 @@
+from anchor_ai.contracts import AgentRequest
+from anchor_ai.runtime import ContextError
 import hmac
 import os
 from contextlib import asynccontextmanager
@@ -34,6 +36,33 @@ async def lifespan(application):
 
 app = FastAPI(lifespan=lifespan)
 router = APIRouter(prefix='/v1')
+
+
+@app.post('/v1/agent')
+async def bounded_agent(
+    body: AgentRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+    x_anchor_context: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth')
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    if not x_anchor_context:
+        raise HTTPException(status_code=403, detail='missing_execution_context')
+    runtime = getattr(app.state, 'bounded_agent_runtime', None)
+    if runtime is None:
+        raise HTTPException(status_code=503, detail='agent_not_configured')
+    try:
+        return await runtime.execute(x_anchor_context, body.model_dump())
+    except ContextError:
+        raise HTTPException(status_code=403, detail='execution_context_rejected') from None
+    except ValueError:
+        raise HTTPException(status_code=422, detail='agent_request_rejected') from None
 
 
 @app.middleware('http')

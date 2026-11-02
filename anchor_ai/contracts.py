@@ -1,5 +1,26 @@
+from dataclasses import dataclass
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator, model_serializer
+
+
+@dataclass(frozen=True)
+class VerifiedExecution:
+    """Returned by the trusted identity verifier, never deserialized from a ticket."""
+    tenant_id: int
+    conversation_id: int
+    principal_id: str
+    role: str
+
+
+class AgentRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    run_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    operation: Literal['start', 'resume', 'approve', 'reject'] = 'start'
+    ticket_type: Literal['single-lookup', 'multi-step refund'] = 'multi-step refund'
+    message: str = Field(default='', max_length=1800)
+    order_id: str = Field(default='A104', pattern=r'^[A-Z][0-9]{3}$')
+    amount_cents: int = Field(default=300, gt=0, le=1000000)
+
 
 ReasoningEffort = Literal['off', 'low', 'high']
 

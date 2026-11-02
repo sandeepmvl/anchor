@@ -1,3 +1,9 @@
+def build_bounded_runtime(path, **dependencies):
+    """Compose the durable agent without changing retrieval-controller defaults."""
+    from anchor_ai.runtime import BoundedRuntime
+    return BoundedRuntime(path, **dependencies)
+
+
 import asyncio
 import hashlib
 import json

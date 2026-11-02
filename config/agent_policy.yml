@@ -4,6 +4,12 @@ run:
   max_calls: 8
   max_cost_units: 16
   deadline_seconds: 30
+  max_tokens: 96
+bounded:
+  call_timeout_seconds: 2
+  strategies:
+    single-lookup: react
+    multi-step refund: plan_execute
 tools:
   retrieve: {mode: read, cost_units: 1}
   lookup_order: {mode: read, cost_units: 1}

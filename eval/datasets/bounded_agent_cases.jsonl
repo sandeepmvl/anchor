@@ -1,0 +1,5 @@
+{"id":"refund-plan","strategy":"plan_execute","token":"worker","approval":true,"expected":"completed","refunds":1}
+{"id":"refund-react","strategy":"react","token":"worker","approval":true,"expected":"completed","refunds":1}
+{"id":"refund-denied","strategy":"plan_execute","token":"reader","approval":null,"expected":"denied","refunds":0}
+{"id":"refund-rejected","strategy":"react","token":"worker","approval":false,"expected":"rejected","refunds":0}
+{"id":"refund-budget","strategy":"plan_execute","token":"worker","approval":null,"max_tokens":7,"expected":"exhausted","refunds":0}
