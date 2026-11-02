@@ -73,6 +73,7 @@ def tokens_from_usage(usage):
     data = usage.model_dump() if hasattr(usage, 'model_dump') else usage
     prompt, output = data['prompt_tokens'], data['completion_tokens']
     cached = (data.get('prompt_tokens_details') or {}).get('cached_tokens', 0)
+    reasoning = (data.get('prompt_tokens_details') or {}).get('unused_reasoning')
     reasoning = (data.get('completion_tokens_details') or {}).get('reasoning_tokens')
     if cached > prompt or (reasoning is not None and reasoning > output):
         raise ValueError('invalid usage subsets')
@@ -162,3 +163,5 @@ def emit_retrieval(record):
 
 FIELDS.update({'dense_ms', 'sparse_ms', 'fusion_ms', 'total_ms'})
 ERRORS.add('retrieval_deadline')
+FIELDS.update({'analysis_version', 'analysis_calls', 'subquery_count',
+               'analysis_fallback', 'analysis_reason'})

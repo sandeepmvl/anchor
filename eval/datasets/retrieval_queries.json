@@ -1,0 +1,23 @@
+{
+  "version": "retrieval-queries-v1",
+  "generation_id": "query-analysis-g1",
+  "top_k": 3,
+  "thresholds": {"chunk_recall": 1.0, "identifier_retention": 1.0, "ticket_hit_rate": 1.0},
+  "chunks": [
+    {"id": 201, "tenant_id": 1, "text": "Late delivery refund: if delivery is seven days late, request refund review."},
+    {"id": 202, "tenant_id": 1, "text": "Change delivery address before dispatch from order details. After dispatch contact support."},
+    {"id": 203, "tenant_id": 1, "text": "Warranty SKU-7 covers manufacturing defects for twelve months."},
+    {"id": 204, "tenant_id": 1, "text": "Refund window for delivered purchases: thirty days after delivery."},
+    {"id": 205, "tenant_id": 1, "text": "Shipping Canada takes five to ten business days."},
+    {"id": 206, "tenant_id": 1, "text": "Return label ORDER-42: open order details and select Request return label."},
+    {"id": 207, "tenant_id": 1, "text": "General help: contact support with a receipt."},
+    {"id": 901, "tenant_id": 2, "text": "Late delivery refund ORDER-42 change delivery address warranty SKU-7 shipping Canada: foreign tenant policy."}
+  ],
+  "cases": [
+    {"id": "delivery-multipart", "tenant_id": 1, "ticket": "ORDER-42 still hasnt arived; can i get my $ back and change deliv addr?", "required": [201, 202]},
+    {"id": "late-refund", "tenant_id": 1, "ticket": "it still hasnt arrived and i want my $ back", "required": [201]},
+    {"id": "sku", "tenant_id": 1, "ticket": "ugh warranty for SKU-7 plz", "required": [203]},
+    {"id": "two-policies", "tenant_id": 1, "ticket": "what's your refund window and do you ship to Canada", "required": [204, 205]},
+    {"id": "return", "tenant_id": 1, "ticket": "plz send me the rtn lbl for ORDER-42", "required": [206]}
+  ]
+}

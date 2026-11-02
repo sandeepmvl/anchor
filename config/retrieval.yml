@@ -43,7 +43,6 @@ vector_index:
   benchmark:
     seed: 42
     vectors: 20000
-    dimensions: 32
     queries: 20
     ivf:
       nlist: 64
@@ -80,3 +79,11 @@ hybrid:
   deadline_seconds: 2
   fixture_env: ANCHOR_HYBRID_FIXTURE
   url: http://127.0.0.1:8000/v1/retrieve/hybrid
+
+query_analysis:
+  provider_env: ANCHOR_QUERY_PROVIDER
+  max_queries: 3
+  deadline_seconds: 1
+  max_tokens: 256
+  fixture_env: ANCHOR_QUERY_FIXTURE
+  url: http://127.0.0.1:8000/v1/retrieve/analyzed

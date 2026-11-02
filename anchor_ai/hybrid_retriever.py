@@ -64,14 +64,15 @@ class HybridRuntime:
         self.rrf_k = rrf_k
         self.deadline_seconds = deadline_seconds
 
-    async def retrieve(self, query, top_k=3):
+    async def retrieve(self, query, top_k=3, *, snapshot=None):
         if not query.strip() or len(query.encode('utf-8')) > 1800:
             raise ValueError('invalid_query')
         if type(top_k) is not int or not 1 <= top_k <= 20:
             raise ValueError('invalid_top_k')
         started = time.monotonic()
         with span('python.hybrid_retrieval', tenant_id=self.tenant_id, stage='retrieval') as summary:
-            snapshot = self.acquire_snapshot(self.tenant_id)
+            if snapshot is None:
+                snapshot = self.acquire_snapshot(self.tenant_id)
             if not isinstance(snapshot, Snapshot) or snapshot.tenant_id != self.tenant_id:
                 raise ValueError('snapshot_scope_mismatch')
             summary.set(generation_id=snapshot.generation_id)
@@ -112,6 +113,40 @@ class HybridRuntime:
             return dict(tenant_id=self.tenant_id, generation_id=snapshot.generation_id,
                         hits=hits)
 
+    async def retrieve_analyzed(self, query, analyzer, top_k=3):
+        if type(top_k) is not int or not 1 <= top_k <= 20:
+            raise ValueError('invalid_top_k')
+        with span('python.analyzed_retrieval', tenant_id=self.tenant_id,
+                  stage='retrieval') as item:
+            plan = await analyzer.analyze(query)
+            snapshot = self.acquire_snapshot(self.tenant_id)
+            if not isinstance(snapshot, Snapshot) or snapshot.tenant_id != self.tenant_id:
+                raise ValueError('snapshot_scope_mismatch')
+
+            async def execute():
+                lists = []
+                for subquery in plan.queries:
+                    result = await self.retrieve(subquery, top_k, snapshot=snapshot)
+                    lists.append(result['hits'])
+                merged, seen = [], set()
+                for rank in range(top_k):
+                    for hits in lists:
+                        if rank < len(hits) and hits[rank]['id'] not in seen:
+                            hit = hits[rank]
+                            seen.add(hit['id'])
+                            merged.append(hit)
+                            if len(merged) == top_k:
+                                return merged
+                return merged
+
+            hits = await asyncio.wait_for(execute(), self.deadline_seconds)
+            item.set(generation_id=snapshot.generation_id,
+                     analysis_version=plan.version, subquery_count=len(plan.queries),
+                     analysis_fallback=plan.fallback, analysis_reason=plan.reason,
+                     chunk_ids=[hit['id'] for hit in hits])
+            return dict(tenant_id=self.tenant_id, generation_id=snapshot.generation_id,
+                        plan=plan.model_dump(), hits=hits)
+
 
 class RecordedHybridClient:
     """Authored rankings for orchestration regression, not a relevance benchmark."""
@@ -135,6 +170,53 @@ class RecordedHybridClient:
             ids = [102, 103] if '4821' in query else [103, 101]
         return [dict(id=i, tenant_id=snapshot.tenant_id,
                      generation_id=snapshot.generation_id) for i in ids[:depth]]
+
+    def dense_search(self, query, snapshot, depth):
+        return self.search('dense', query, snapshot, depth)
+
+    def sparse_search(self, query, snapshot, depth):
+        return self.search('sparse', query, snapshot, depth)
+
+
+class QueryFixtureClient:
+    """Synthetic corpus ranking, not a learned embedding relevance benchmark."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.acquisitions = []
+        self.calls = []
+
+    def acquire_snapshot(self, tenant_id):
+        self.acquisitions.append(tenant_id)
+        rows = tuple(row for row in self.dataset['chunks'] if row['tenant_id'] == tenant_id)
+        if not rows:
+            raise ValueError('fixture_scope_mismatch')
+        return Snapshot(tenant_id, self.dataset['generation_id'], rows)
+
+    def search(self, branch, query, snapshot, depth):
+        import re
+        import numpy as np
+        from sklearn.feature_extraction.text import HashingVectorizer
+        from rank_bm25 import BM25Okapi
+        stop = {'a', 'an', 'the', 'for', 'and', 'i', 'my', 'it', 'to', 'your', 'me', 'of', 'can'}
+
+        def tokens(text):
+            return [t for t in re.findall(r'[a-z0-9]+(?:-[a-z0-9]+)*', text.lower())
+                    if t not in stop]
+
+        self.calls.append((branch, query, snapshot.tenant_id, snapshot.generation_id))
+        documents = [row['text'] for row in snapshot.chunks]
+        if branch == 'sparse':
+            scores = BM25Okapi([tokens(text) for text in documents]).get_scores(tokens(query))
+        else:
+            vectorizer = HashingVectorizer(n_features=4096, alternate_sign=False,
+                analyzer=tokens, norm='l2')
+            vectors = vectorizer.transform([query] + documents)
+            scores = np.asarray((vectors[1:] @ vectors[0].T).toarray()).ravel()
+        ranked = sorted(zip(snapshot.chunks, scores), key=lambda pair: (-float(pair[1]), pair[0]['id']))
+        return [dict(id=row['id'], tenant_id=snapshot.tenant_id,
+                     generation_id=snapshot.generation_id)
+                for row, score in ranked if score > 0][:depth]
 
     def dense_search(self, query, snapshot, depth):
         return self.search('dense', query, snapshot, depth)

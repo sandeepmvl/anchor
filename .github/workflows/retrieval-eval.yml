@@ -1,0 +1,33 @@
+name: Retrieval regression
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  accumulated-tests:
+    runs-on: ubuntu-latest
+    env:
+      ANCHOR_LLM_PROVIDER: offline
+      ANCHOR_QUERY_PROVIDER: offline
+      ANCHOR_EMBEDDING_PROVIDER: offline
+      RAILS_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: anchor_ai/requirements.txt
+      - name: Python dependencies
+        run: |
+          python -m pip install -r anchor_ai/requirements.txt
+          python -m pip install pytest httpx fastapi pydantic pyyaml rank-bm25 numpy scipy scikit-learn
+      - name: Accumulated AI unit and trajectory tests
+        run: python -m pytest -q anchor_ai/tests
+      - name: Versioned offline retrieval gate
+        run: python eval/retrieval_gate.py
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Accumulated Rails CI
+        run: bin/ci

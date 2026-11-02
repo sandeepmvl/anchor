@@ -124,3 +124,38 @@ def published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_s
                              **settings):
     from anchor_ai.hybrid_retriever import HybridRuntime
     return HybridRuntime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings)
+
+
+class AnalyzedRuntime:
+    def __init__(self, hybrid, analyzer):
+        self.hybrid = hybrid
+        self.analyzer = analyzer
+        self.tenant_id = hybrid.tenant_id
+
+    async def retrieve(self, query, top_k=3):
+        return await self.hybrid.retrieve_analyzed(query, self.analyzer, top_k)
+
+
+def published_analyzed_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
+                               analyzer=None, **settings):
+    from anchor_ai.query_analyzer import make_analyzer
+    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot,
+                                     dense_search, sparse_search, **settings)
+    return AnalyzedRuntime(hybrid, analyzer or make_analyzer())
+
+
+def fixture_analyzed_runtime(tenant_id):
+    from pathlib import Path
+    from anchor_ai.hybrid_retriever import QueryFixtureClient
+    from anchor_ai.query_analyzer import QueryAnalyzer, RecordedQueryClient
+    path = Path(__file__).resolve().parents[1] / 'eval/datasets/retrieval_queries.json'
+    client = QueryFixtureClient(json.loads(path.read_text()))
+    settings = hybrid_settings()
+    # Offline cold imports and thread scheduling must not test production latency.
+    settings['deadline_seconds'] = 10
+    runtime = published_analyzed_runtime(tenant_id, client.acquire_snapshot,
+        client.dense_search, client.sparse_search,
+        analyzer=QueryAnalyzer(RecordedQueryClient()),
+        **{key: settings[key] for key in ('candidate_depth', 'rrf_k', 'deadline_seconds')})
+    runtime.fixture_client = client
+    return runtime

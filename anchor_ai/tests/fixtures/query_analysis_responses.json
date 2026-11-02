@@ -1,0 +1,17 @@
+{
+  "ORDER-42 still hasnt arived; can i get my $ back and change deliv addr?": {
+    "queries": ["late delivery refund ORDER-42", "change delivery address ORDER-42"]
+  },
+  "it still hasnt arrived and i want my $ back": {
+    "queries": ["refund for late delivery"]
+  },
+  "ugh warranty for SKU-7 plz": {
+    "queries": ["warranty SKU-7"]
+  },
+  "what's your refund window and do you ship to Canada": {
+    "queries": ["refund window", "shipping Canada"]
+  },
+  "plz send me the rtn lbl for ORDER-42": {
+    "queries": ["return label ORDER-42"]
+  }
+}

@@ -130,3 +130,26 @@ class HybridResponse(BaseModel):
     tenant_id: int = Field(gt=0)
     generation_id: str = Field(min_length=1)
     hits: list[HybridHit]
+
+
+class QueryPlanPayload(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    queries: list[str] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode='after')
+    def query_lengths(self):
+        if any(not q.strip() or len(q.encode('utf-8')) > 300 for q in self.queries):
+            raise ValueError('invalid_subquery')
+        return self
+
+
+class RetrievalPlan(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    version: str
+    queries: list[str]
+    fallback: bool
+    reason: str
+
+
+class AnalyzedResponse(HybridResponse):
+    plan: RetrievalPlan
