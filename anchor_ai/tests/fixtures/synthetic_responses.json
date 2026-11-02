@@ -1,0 +1,12 @@
+[
+  {"input":"Please review this disputed refund {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"A disputed payment needs investigation {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"I need help investigating a refund dispute {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"Please examine this refund disagreement {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"{seed_input}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"Investigate this refund immediately {unique}","output":"Your refund is guaranteed within one hour.","label":"refund_review","label_2":"refund_review"},
+  {"input":"Check this disputed transaction {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_decline"},
+  {"input":"Contact invented.person@example.test about this dispute {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review"},
+  {"input":"Review this separate disputed purchase {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review","fixture_parent":"held_out"},
+  {"input":"Investigate this other account dispute {unique}","output":"We will send this request for human review.","label":"refund_review","label_2":"refund_review","fixture_tenant":"other-tenant"}
+]

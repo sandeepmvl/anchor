@@ -157,3 +157,20 @@ def test_outer_deadline(monkeypatch):
     with pytest.raises(ProviderError) as failure:
         LlmClient(ReplayProvider()).complete("Hello")
     assert failure.value.retryable
+
+
+def test_synthetic_fixture_selection_is_isolated():
+    from anchor_ai.provider import FIXTURES
+    before = FIXTURES.read_bytes()
+    baseline = ReplayProvider('200').sequence
+    async def check():
+        provider = ReplayProvider(task='synthetic', fixture_id='0', variant='prompt')
+        async with provider.client() as client:
+            response = await client.post('https://offline.invalid/completions',
+                                         json={'messages': [{'role': 'user', 'content': 'prompt'}]})
+        assert response.status_code == 200
+        assert json.loads(response.json()['choices'][0]['message']['content'])['label'] == 'refund_review'
+        assert len(provider.requests) == 1
+    asyncio.run(check())
+    assert FIXTURES.read_bytes() == before
+    assert ReplayProvider('200').sequence == baseline

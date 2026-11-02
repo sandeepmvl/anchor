@@ -54,7 +54,22 @@ class ReplayProvider:
         self.expected_reasoning = None
         self.expected_format = None
         self.fixture_latency_ms = None
-        if task == 'structured':
+        if task == 'synthetic':
+            try:
+                records = json.loads(FIXTURES.with_name('synthetic_responses.json').read_text())
+                record = records[int(fixture_id)]
+                if not isinstance(variant, str):
+                    raise ValueError('missing_prompt')
+                self.expected_messages = [{'role': 'user', 'content': variant}]
+                self.sequence = [{'status': 200, 'body': {
+                    'model': 'offline-synthetic',
+                    'choices': [{'message': {'content': json.dumps(record)},
+                                 'finish_reason': 'stop'}],
+                    'usage': {'prompt_tokens': 100, 'completion_tokens': 40,
+                              'total_tokens': 140}}}]
+            except (IndexError, ValueError, TypeError, KeyError):
+                raise ProviderError('replay_miss') from None
+        elif task == 'structured':
             try:
                 record = next(item for item in json.loads(STRUCTURED_RESPONSES.read_text())
                               if item['id'] == fixture_id)

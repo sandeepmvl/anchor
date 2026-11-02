@@ -81,3 +81,24 @@ def sft_examples(rows, policy=None):
         result.append({'prompt': [{'role': 'user', 'content': row['input']}],
                        'completion': [{'role': 'assistant', 'content': row['output']}]})
     return result
+
+
+def synthetic_batch_decision(generated, rejected, real, existing_synthetic,
+                             accepted, policy=None):
+    policy = load_policy() if policy is None else policy
+    limits = policy['synthetic']
+    counts = (generated, rejected, real, existing_synthetic, accepted)
+    if any(type(n) is not int or n < 0 for n in counts):
+        raise ValueError('invalid_batch_counts')
+    if generated != rejected + accepted:
+        raise ValueError('invalid_batch_counts')
+    rate = rejected / generated if generated else None
+    ratio = (existing_synthetic + accepted) / real if real else None
+    low, high = limits['reject_rate_band']
+    within = (rate is not None and ratio is not None
+              and low <= rate <= high
+              and ratio <= limits['max_synthetic_real_ratio'])
+    return {'reject_rate': rate, 'synthetic_real_ratio': ratio,
+            'within_bands': within,
+            'decision': 'eligible_for_review' if within else 'hold',
+            'merged': False, 'training_release': False}

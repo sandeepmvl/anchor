@@ -37,3 +37,14 @@ dataset:
     - inspected_duplicates_and_grouped_splits
     - declared_label_coverage
     - independent_golden_dataset_and_judge_regression_gate
+
+synthetic:
+  reject_rate_band: [0.2, 0.6]
+  max_synthetic_real_ratio: 1.0
+  source_paths:
+    - eval/finetune/train.jsonl
+    - eval/finetune/validation.jsonl
+    - eval/finetune/held_out.jsonl
+  approved_outputs:
+    refund_review: We will send this request for human review.
+    refund_decline: We cannot approve this request under the reviewed criteria.
