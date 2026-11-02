@@ -84,4 +84,35 @@ class AiBoundaryTest < ActiveSupport::TestCase
       assert_equal [code, 502], [error.code, error.status]
     end
   end
+
+  test "provider rate limit preserves safe retry metadata without a Rails retry" do
+    call = upstream.to_return(status: 429, body: JSON.generate(detail: {
+      code: "provider_rate_limited", retryable: true, retry_after: 2, attempts: 2
+    }))
+    error = assert_raises(LlmClient::BoundaryError) { @client.complete("Hello") }
+    assert_equal ["provider_rate_limited", 429, true, 2],
+      [error.code, error.status, error.retryable, error.retry_after]
+    assert_requested call, times: 1
+  end
+
+  test "unsafe retry hints are omitted" do
+    ["2\r\nInjected: yes", -1, 61, 1.5, nil].each do |raw|
+      WebMock.reset!
+      upstream.to_return(status: 429, body: JSON.generate(detail: {
+        code: "provider_rate_limited", retryable: true, retry_after: raw
+      }))
+      error = assert_raises(LlmClient::BoundaryError) { @client.complete("Hello") }
+      assert_nil error.retry_after
+    end
+  end
+
+  test "provider authentication failure differs from service authentication failure" do
+    upstream.to_return(status: 401, body: JSON.generate(detail: {
+      code: "provider_auth_failed", retryable: false, retry_after: nil, attempts: 1
+    }))
+    error = assert_raises(LlmClient::BoundaryError) { @client.complete("Hello") }
+    assert_equal "provider_auth_failed", error.code
+    assert_equal 502, error.status
+    assert_equal false, error.retryable
+  end
 end

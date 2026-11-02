@@ -18,7 +18,17 @@ class InferRequest(BaseModel):
         return value
 
 
+class Usage(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+
+
 class InferResponse(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     reply: str
     tokens: int = Field(ge=0)
+    usage: Usage
+    finish_reason: str
+    attempts: int = Field(ge=1)

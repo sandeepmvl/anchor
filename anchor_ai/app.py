@@ -7,16 +7,18 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException
 try:
     from .contracts import InferRequest, InferResponse
     from .llm_client import LlmClient
+    from .provider import ProviderError
 except ImportError:
     from contracts import InferRequest, InferResponse
     from llm_client import LlmClient
+    from provider import ProviderError
 
 app = FastAPI()
 router = APIRouter(prefix="/v1")
 
 
 @router.post("/infer", response_model=InferResponse)
-def infer(
+async def infer(
     body: InferRequest,
     x_anchor_secret: Annotated[str | None, Header()] = None,
 ) -> InferResponse:
@@ -26,7 +28,10 @@ def infer(
     supplied = (x_anchor_secret or "").encode("utf-8")
     if not hmac.compare_digest(supplied, expected.encode("utf-8")):
         raise HTTPException(status_code=401, detail="service_auth_failed")
-    return InferResponse(reply=LlmClient().complete(body.message), tokens=0)
+    try:
+        return await LlmClient().complete_result(body.message)
+    except ProviderError as error:
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
 
 
 app.include_router(router)

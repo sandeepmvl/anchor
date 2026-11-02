@@ -17,6 +17,9 @@ def boundary(monkeypatch):
     secret = secrets.token_hex(24)
     monkeypatch.setenv("ANCHOR_AI_SECRET", secret)
     monkeypatch.setenv("ANCHOR_AI_PROVIDER", "offline")
+    monkeypatch.setenv("ANCHOR_LLM_MODE", "offline")
+    monkeypatch.setenv("ANCHOR_LLM_FIXTURE", "200")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with TestClient(app) as client:
         yield client, {"X-Anchor-Secret": secret}
 
@@ -27,7 +30,9 @@ def test_reply(boundary, path):
     response = client.post(path, json=PAYLOAD, headers=headers)
     assert response.status_code == 200
     assert response.json() == {
-        "reply": LlmClient().complete(PAYLOAD["message"]), "tokens": 0,
+        "reply": LlmClient().complete(PAYLOAD["message"]), "tokens": 38,
+        "usage": {"prompt_tokens": 24, "completion_tokens": 14, "total_tokens": 38},
+        "finish_reason": "stop", "attempts": 1,
     }
 
 

@@ -7,10 +7,11 @@ class LlmClient
   CANNED_REPLY = "Anchor stub: thanks for your message, a support reply is on its way."
 
   class BoundaryError < StandardError
-    attr_reader :code, :status
+    attr_reader :code, :status, :retryable, :retry_after
 
-    def initialize(code, status)
+    def initialize(code, status, retryable: false, retry_after: nil)
       @code, @status = code, status
+      @retryable, @retry_after = retryable, retry_after
       super(code)
     end
   end
@@ -24,8 +25,7 @@ class LlmClient
     when "stub"
       CANNED_REPLY
     when "openai"
-      api_key
-      raise NotImplementedError, "Live calls arrive in the LLM provider APIs lesson"
+      http_complete(message)
     when "http"
       http_complete(message)
     else
@@ -66,6 +66,7 @@ class LlmClient
     )
     response = http.request(request)
     status = response.code.to_i
+    provider_failure(response, status) unless (200..299).cover?(status)
     fail_boundary("ai_auth_rejected", 502) if status == 401
     fail_boundary("ai_contract_rejected", 502) if status == 422
     fail_boundary("ai_upstream_error", 502) unless (200..299).cover?(status)
@@ -86,6 +87,27 @@ class LlmClient
     fail_boundary("ai_configuration_error", 503)
   end
 
+  def provider_failure(response, status)
+    data = JSON.parse(response.body)
+    detail = data.is_a?(Hash) ? data["detail"] : nil
+    return unless detail.is_a?(Hash)
+    codes = %w[provider_bad_request provider_auth_failed provider_forbidden
+      provider_not_found provider_quota_exhausted provider_rate_limited
+      provider_unknown_429 provider_unavailable provider_transport_error
+      provider_timeout invalid_provider_response missing_provider_key
+      invalid_provider_mode provider_rejected]
+    code = detail["code"]
+    return unless codes.include?(code)
+    retryable = detail["retryable"] == true && %w[provider_rate_limited
+      provider_unavailable provider_transport_error provider_timeout].include?(code)
+    raw = detail["retry_after"]
+    wait = raw if retryable && raw.is_a?(Integer) && (0..60).cover?(raw)
+    mapped = code == "provider_rate_limited" ? 429 : 502
+    raise BoundaryError.new(code, mapped, retryable: retryable, retry_after: wait)
+  rescue JSON::ParserError
+    nil
+  end
+
   def positive_timeout(raw)
     value = Float(raw)
     raise ArgumentError, "invalid timeout" unless value.finite? && value.positive?
@@ -99,6 +121,11 @@ end
 
 ActiveSupport.on_load(:action_controller_base) do
   rescue_from LlmClient::BoundaryError do |error|
-    render json: { error: error.code }, status: error.status
+    response.set_header("Retry-After", error.retry_after.to_s) unless error.retry_after.nil?
+    body = { error: error.code }
+    if error.code.start_with?("provider_")
+      body.merge!(retryable: error.retryable, retry_after: error.retry_after)
+    end
+    render json: body, status: error.status
   end
 end

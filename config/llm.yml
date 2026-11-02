@@ -2,4 +2,5 @@ shared:
   provider: <%= ENV.fetch("ANCHOR_LLM_PROVIDER", "stub").inspect %>
   url: <%= ENV.fetch("ANCHOR_AI_URL", "http://127.0.0.1:8000/v1/infer").inspect %>
   open_timeout: <%= ENV.fetch("ANCHOR_AI_OPEN_TIMEOUT", "2").inspect %>
+  # Python's four-second total deadline must remain below this read timeout.
   read_timeout: <%= ENV.fetch("ANCHOR_AI_READ_TIMEOUT", "5").inspect %>

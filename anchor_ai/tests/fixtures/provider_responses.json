@@ -1,0 +1,17 @@
+{
+  "200": [{"status":200,"body":{"choices":[{"message":{"role":"assistant","content":"I can help check the return policy for your order."},"finish_reason":"stop"}],"usage":{"prompt_tokens":24,"completion_tokens":14,"total_tokens":38}}}],
+  "length": [{"status":200,"body":{"choices":[{"message":{"content":"I can help"},"finish_reason":"length"}],"usage":{"prompt_tokens":24,"completion_tokens":3,"total_tokens":27}}}],
+  "400": [{"status":400,"body":{"error":{"code":"context_length_exceeded"}}}],
+  "401": [{"status":401,"body":{"error":{"code":"invalid_api_key"}}}],
+  "403": [{"status":403,"body":{"error":{"code":"permission_denied"}}}],
+  "404": [{"status":404,"body":{"error":{"code":"model_not_found"}}}],
+  "429_quota": [{"status":429,"body":{"error":{"code":"insufficient_quota"}}}],
+  "429_persistent": [{"status":429,"headers":{"Retry-After":"2"},"body":{"error":{"code":"rate_limit_exceeded"}}}],
+  "429_recover": [
+    {"status":429,"headers":{"Retry-After":"0.2"},"body":{"error":{"code":"rate_limit_exceeded"}}},
+    {"status":200,"body":{"choices":[{"message":{"content":"I can help check the return policy for your order."},"finish_reason":"stop"}],"usage":{"prompt_tokens":24,"completion_tokens":14,"total_tokens":38}}}
+  ],
+  "5xx": [{"status":503,"text":"Service unavailable"}],
+  "timeout": [{"exception":"timeout"},{"status":200,"body":{"choices":[{"message":{"content":"Recovered reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}}],
+  "connection": [{"exception":"connection"},{"status":200,"body":{"choices":[{"message":{"content":"Recovered reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}}]
+}
