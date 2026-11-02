@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+require "rbconfig"
+
+root = File.expand_path("..", __dir__)
+Dir.chdir(root)
+python = ENV.fetch("ANCHOR_PYTHON", "python3")
+commands = [
+  [RbConfig.ruby, "bin/rails", "test"],
+  [python, "-m", "pytest", "-q", "anchor_ai/tests"],
+  [python, "eval/retrieval_gate.py"],
+  [python, "eval/rag_gate.py"],
+  [python, "eval/agent_gate.py"],
+  [python, "eval/multi_agent_gate.py"]
+]
+
+if ENV["ANCHOR_RELEASE_CONTRACT_ONLY"] == "1"
+  warn "release_gate: BLOCKED — contract-inspection mode cannot release"
+  exit 1
+end
+
+commands.each do |command|
+  puts "release_gate: running #{command.join(' ')}"
+  unless system(*command)
+    warn "release_gate: BLOCKED"
+    exit 1
+  end
+end
+
+puts "release_gate: PASS — accumulated product gates passed"

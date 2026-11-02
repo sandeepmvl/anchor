@@ -19,3 +19,12 @@ rubric:
   network/handoff: {handoff: 4}
 framework_selection:
   policy: config/framework_selection.yml
+milestone:
+  endpoint: /v1/multi_agent
+  default_mode: human_only
+  required_integrations:
+    - cited_retrieval
+    - durable_specialist_handoff
+    - local_mcp
+    - isolated_sandbox
+    - redacted_human_handoff

@@ -1,0 +1,19 @@
+name: Multi-agent release gate
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: [self-hosted, anchor-integration]
+    timeout-minutes: 15
+    env:
+      ANCHOR_ORCHESTRATION_RELEASE_ADAPTER: ${{ vars.ANCHOR_ORCHESTRATION_RELEASE_ADAPTER }}
+      ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS: ${{ vars.ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS }}
+      ANCHOR_AI_SECRET: ${{ secrets.ANCHOR_AI_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Accumulated product gates
+        run: ruby bin/release_gate

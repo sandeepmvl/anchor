@@ -194,3 +194,26 @@ async def run_framework_task(usecase, payload, envelope, *, adapters,
     if supplied != trusted:
         raise ValueError('framework_envelope_mutated')
     return dict(framework=framework, envelope=trusted, result=result)
+
+
+MILESTONE_INTEGRATIONS = frozenset({
+    'cited_retrieval', 'durable_specialist_handoff', 'local_mcp',
+    'isolated_sandbox', 'redacted_human_handoff',
+})
+
+
+class MilestoneUnavailable(RuntimeError):
+    code = 'orchestration_not_configured'
+    status = 503
+
+
+async def run_milestone(runtime, token, request):
+    """The composed runtime retains context verification and dispatch guards."""
+    if runtime is None or not callable(getattr(runtime, 'execute', None)):
+        raise MilestoneUnavailable('orchestration_not_configured')
+    capabilities = getattr(runtime, 'integrations', ())
+    if not MILESTONE_INTEGRATIONS.issubset(capabilities):
+        raise MilestoneUnavailable('orchestration_integration_missing')
+    if not token:
+        raise ValueError('missing_execution_context')
+    return await runtime.execute(token, copy.deepcopy(request))

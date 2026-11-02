@@ -117,6 +117,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--fault', choices=['unauthorized', 'tenant-leak', 'duplicate', 'missing-escalation'])
     parser.add_argument('--expect-rejection', action='store_true')
+    parser.add_argument('--include-multi-agent', action='store_true')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
         for index, case in enumerate(load_cases()):
@@ -134,6 +135,10 @@ async def main():
                 raise AssertionError('gate accepted the injected fault')
             print('PASS', case['id'], trace['status'], 'refunds=' + str(trace['backend_refund_count']))
     print('PASS bounded-agent golden trajectory gate')
+    if args.include_multi_agent:
+        import os
+        from eval.multi_agent_gate import load_adapter, run_gate
+        run_gate(load_adapter(), os.environ.get('ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS'))
 
 
 if __name__ == '__main__':

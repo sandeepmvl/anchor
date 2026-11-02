@@ -244,3 +244,4 @@ def mcp_span(scope, server_id, call_id):
 FIELDS.update({'execution_mode', 'task_id', 'call_id', 'interop_protocol',
                'permission_decision', 'permission_reason'})
 ERRORS.add('delegation_rejected')
+ERRORS.add('orchestration_not_configured')

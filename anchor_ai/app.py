@@ -453,3 +453,34 @@ async def chain_reply(
     except ProviderError as error:
         item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
+
+
+@app.post('/v1/multi_agent')
+async def multi_agent(
+    body: AgentRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+    x_anchor_context: Annotated[str | None, Header()] = None,
+):
+    from anchor_ai.orchestration import run_milestone, MilestoneUnavailable
+    item = request.state.telemetry
+    item.set(stage='auth')
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    if not x_anchor_context:
+        raise HTTPException(status_code=403, detail='missing_execution_context')
+    try:
+        with span('python.multi_agent', stage='orchestration'):
+            return await run_milestone(
+                getattr(app.state, 'multi_agent_runtime', None),
+                x_anchor_context, body.model_dump())
+    except MilestoneUnavailable:
+        item.fail('orchestration_not_configured', 503)
+        raise HTTPException(status_code=503, detail='orchestration_not_configured') from None
+    except ContextError:
+        raise HTTPException(status_code=403, detail='execution_context_rejected') from None
+    except ValueError:
+        raise HTTPException(status_code=422, detail='agent_request_rejected') from None
