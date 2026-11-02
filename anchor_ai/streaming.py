@@ -95,3 +95,12 @@ def response_for(body, request):
         media_type='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
     )
+
+
+async def cancel_tasks(tasks):
+    """Drain all session tasks, including tasks that failed before shutdown."""
+    pending = [task for task in tasks if task is not None]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)

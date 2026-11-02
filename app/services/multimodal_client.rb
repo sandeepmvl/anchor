@@ -26,6 +26,11 @@ class MultimodalClient
       tenant_id: tenant_id, conversation_id: conversation_id)
   end
 
+  def realtime_session(session:, ticket_id:, origin:)
+    RealtimeSessionIssuer.from_application.issue(
+      session: session, ticket_id: ticket_id, origin: origin)
+  end
+
   private
 
   def invoke(body, tenant_id:, conversation_id:)

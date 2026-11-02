@@ -261,3 +261,9 @@ class AttachmentScope(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     tenant_id: int = Field(gt=0)
     conversation_id: int = Field(gt=0)
+
+
+class RealtimeTranscript(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    text: str = Field(min_length=1, max_length=4000)
+    untrusted: Literal[True] = True

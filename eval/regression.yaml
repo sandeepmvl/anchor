@@ -20,3 +20,6 @@ defaultTest:
       value: '(?i)original payment method'
     - type: python
       value: "file://regression_assertions.py:rubric_assert"
+# Additional multimodal trajectory regression: python -m eval.agent_gate --multimodal
+# Dataset: eval/datasets/multimodal_injection_cases.jsonl
+# Live judge and audible-latency evidence remain separate release requirements.

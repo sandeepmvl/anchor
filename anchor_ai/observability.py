@@ -297,3 +297,17 @@ def vision_span():
     with span('python.vision', stage='vision', vision_backend='offline',
               vision_usage_basis='not_measured_offline') as item:
         yield item
+
+
+def realtime_event(session, scope, event, epoch, queue_depth, **fields):
+    allowed = {'send_ms', 'expected', 'received'}
+    events = {'send_done', 'queued', 'barge_in', 'stt_start', 'stt_done',
+              'generation_start', 'answer_text', 'tts_start', 'audio',
+              'frame_gap', 'speech_start', 'end_of_speech', 'session_failure', 'session_closed'}
+    if event not in events or set(fields) - allowed:
+        raise ValueError('unsafe_realtime_metadata')
+    if any(type(value) not in (int, float) for value in fields.values()):
+        raise ValueError('unsafe_realtime_metadata')
+    return dict(event=event, t=time.monotonic(), trace_id=session,
+                tenant_id=scope['tenant_id'], ticket_id=scope['ticket_id'],
+                epoch=epoch, queue_depth=queue_depth, **fields)

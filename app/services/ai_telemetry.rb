@@ -20,6 +20,10 @@ class AiTelemetry
     def sink
       @sink ||= ->(record) { $stdout.puts(JSON.generate(record)) }
     end
+    def realtime_issuance(status:)
+      raise ArgumentError, 'invalid_realtime_status' unless %w[issued denied].include?(status)
+      sink.call(event: 'anchor.realtime.issuance', status: status)
+    end
 
     def golden_event(status:, count:)
       unless %w[ok rejected].include?(status) && count.is_a?(Integer) && count >= 0
@@ -81,7 +85,7 @@ class AiTelemetry
 
     def headers
       { 'X-Request-Id' => @record[:request_id],
-        'traceparent' => "00-#{@record[:trace_id]}-#{@record[:span_id]}-01" }
+        traceparent: "00-#{@record[:trace_id]}-#{@record[:span_id]}-01" }.transform_keys(&:to_s)
     end
 
     def fail(code, status = nil)

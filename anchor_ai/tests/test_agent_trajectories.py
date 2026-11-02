@@ -114,3 +114,17 @@ def test_agent_gate_rejects_corrupted_replay(tmp_path, fault):
     # Require the original guard's error, not merely any trajectory rejection.
     with pytest.raises(ValueError, match='^' + expected_error + '$'):
         validate(corrupt(trace, fault), case)
+
+
+def test_multimodal_instructions_never_grant_tool_approval():
+    from anchor_ai.realtime import capture_injection, injection_cases
+    from eval.agent_gate import validate_capture
+    cases = injection_cases()
+    assert {case['source'] for case in cases} == {'screenshot', 'ocr', 'transcript'}
+    for case in cases:
+        captured = asyncio.run(capture_injection(case))
+        validate_capture(captured)
+        corrupted = copy.deepcopy(captured)
+        corrupted['approval_granted'] = True
+        with pytest.raises(ValueError, match='multimodal_instruction_accepted'):
+            validate_capture(corrupted)

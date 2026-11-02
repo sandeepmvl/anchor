@@ -226,3 +226,12 @@ def incomplete_handoff(trusted, error, *, boundary):
             'boundary': boundary, 'tool_calls': [], 'do_not_retry': True,
             'context': redact(context),
             'next_action': 'authenticated human investigation'}
+
+
+def realtime_handoff(payload):
+    required = {'scope', 'reason', 'transcript', 'heard', 'evidence',
+                'pending_action', 'approval_required'}
+    if (set(payload) != required or payload['pending_action'] != 'none_executed'
+            or payload['approval_required'] is not True):
+        raise ValueError('invalid_realtime_handoff')
+    return redact(payload)

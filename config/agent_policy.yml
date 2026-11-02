@@ -39,3 +39,6 @@ tenants:
 # Planning uses the same tools and tenant roles, not a separate policy namespace.
 # The controller caps plans at six steps and replacement plans at one.
 # Successful address writes require an authoritative receipt and undo token.
+# Realtime voice never dispatches consequential tools or grants confirmation.
+# Screenshots, OCR spans, and transcripts remain untrusted evidence.
+# Existing authenticated approval, dry-run, and recovery gates remain required.

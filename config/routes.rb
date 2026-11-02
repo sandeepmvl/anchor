@@ -1,4 +1,5 @@
 Rails.application.config.filter_parameters += [:summary, :authorization]
+Rails.application.config.filter_parameters += [:credential]
 
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
@@ -18,4 +19,5 @@ Rails.application.routes.draw do
   get '/tickets/:ticket_id', to: 'api/ticket_attachments#index', as: :attachment_ticket
   get '/api/tickets/:ticket_id/attachments/:id', to: 'api/ticket_attachments#show', as: :ticket_attachment_evidence
   post '/api/tickets/:ticket_id/attachments', to: 'api/ticket_attachments#create', as: :ticket_attachments
+  post '/api/realtime_sessions', to: 'api/realtime_sessions#create'
 end

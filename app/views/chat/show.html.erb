@@ -1,6 +1,10 @@
 <%= csrf_meta_tags %>
 <% if @ticket %>
   <h1><%= @ticket.subject %></h1>
+  <aside aria-label="Realtime voice">
+    <p>Realtime voice uses ticket-bound credentials. Spoken approval never executes an action.</p>
+    <p>The local voice client verifies interruption and evidence events; browser audio acceptance is separate.</p>
+  </aside>
   <p>Only sanitized evidence is retained. Re-upload is required after extraction failure.</p>
   <%= form_with url: ticket_attachments_path(ticket_id: @ticket.id), multipart: true do |form| %>
     <%= form.label :kind, 'Attachment kind' %>

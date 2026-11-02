@@ -543,3 +543,7 @@ def extract_ticket_attachment(raw, *, kind, token, secret, expected_scope,
                    expected_tenant=identity.tenant_id,
                    expected_conversation=identity.conversation_id,
                    adapter=adapter, production=production)
+
+
+from anchor_ai.realtime import configure_product
+configure_product(app)

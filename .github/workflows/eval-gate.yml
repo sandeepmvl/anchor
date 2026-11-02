@@ -82,6 +82,7 @@ jobs:
       ANCHOR_EVAL_PROVIDER: offline
       ANCHOR_ORCHESTRATION_RELEASE_ADAPTER: ${{ vars.ANCHOR_ORCHESTRATION_RELEASE_ADAPTER }}
       ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS: ${{ vars.ANCHOR_MULTI_AGENT_JUDGE_RECORDINGS }}
+      ANCHOR_REALTIME_RELEASE_EVIDENCE: ${{ vars.ANCHOR_REALTIME_RELEASE_EVIDENCE }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,6 +100,9 @@ jobs:
       - run: python eval/rag_gate.py
       - run: python eval/agent_gate.py
       - run: python eval/multi_agent_gate.py
+      - run: python -m eval.agent_gate --multimodal
+      - run: python -m eval.agent_gate --multimodal --fault multimodal --expect-rejection
+      - run: python -m eval.agent_gate --realtime-release --release-evidence "$ANCHOR_REALTIME_RELEASE_EVIDENCE"
   gate:
     name: Anchor release gate
     if: always()

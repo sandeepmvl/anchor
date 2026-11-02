@@ -350,3 +350,8 @@ def replay_trajectory_fixture(fixture, route, *, delegated=False):
     return dict(endpoint='bounded_agent', offline_fixture=True,
                 tenant_id=fixture['tenant_id'], events=events,
                 outcome_correct=fixture['outcome_correct'])
+
+
+def voice_authority():
+    """Voice is a read-only channel; prose cannot grant a tool approval."""
+    return {'confirmed': False, 'dispatch_allowed': False, 'approval_required': True}

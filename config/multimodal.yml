@@ -14,3 +14,8 @@ max_image_bytes: 2000000
 max_edge: 768
 max_pixels: 589824
 max_output_tokens: 512
+
+# Realtime: ANCHOR_REALTIME_ADAPTER supplies live ports and shared reservations.
+# PCM ingress: 20 ms mono PCM16 at 16 kHz; four pending output events.
+# Deadlines: STT 200 ms, text chunk 300 ms, TTS chunk 200 ms, send 100 ms.
+# Fixture measurements do not verify recognition, network, or audible latency.

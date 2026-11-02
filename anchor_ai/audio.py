@@ -246,3 +246,14 @@ def extract_voice(raw, identity, *, adapter=None, production=False):
             'confidence': 0.8 if readable else None, 'adapter': 'audio',
             'gate_fired': not readable or result['partial'], 'tool_requested': False,
             'notice': notice, 'offline_fixture': result['offline_fixture']}
+
+
+def realtime_frame(raw):
+    """Decode one 20 ms PCM16/16 kHz mono frame with its sequence number."""
+    import struct
+    if not isinstance(raw, bytes) or len(raw) != 648:
+        raise ValueError('audio_frame_rejected')
+    sequence = struct.unpack('!Q', raw[:8])[0]
+    pcm = raw[8:]
+    speech = max(abs(v) for v in struct.unpack('<320h', pcm)) > 500
+    return sequence, pcm, speech
