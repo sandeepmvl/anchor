@@ -1,0 +1,11 @@
+/.bundle
+/log/*
+/tmp/*
+/storage/*
+/db/*.sqlite3*
+/config/master.key
+__pycache__/
+.pytest_cache/
+*.pyc
+labs/*/sandbox/
+.env
