@@ -1,0 +1,21 @@
+<h1>Anchor AI costs</h1>
+<p><%= @window %> — <%= @config.fetch('unit') %></p>
+<p>Price: <%= @config.fetch('price_version') %>; budget: <%= @config.fetch('budget_version') %></p>
+<% if @config.fetch('fixture') %><p>Illustrative fake-provider accounting; not a dollar invoice.</p><% end %>
+<table>
+  <thead><tr><th>Feature</th><th>Total</th><th>Budget</th><th>Alert</th>
+    <% AiBudgetCounter::DRIVERS.each do |driver| %><th><%= driver %></th><% end %>
+    <th>Input tokens</th><th>Cached subset</th><th>Output tokens</th><th>Reasoning subset</th>
+    <th>Embedding tokens</th><th>Attempts</th><th>Cache savings</th>
+  </tr></thead>
+  <tbody><% @counters.each do |counter| %>
+    <tr><td><%= counter.feature %></td><td><%= counter.total %></td>
+      <td><%= @config.fetch('budgets').fetch(counter.feature).fetch('limit') %></td>
+      <td><%= counter.warning?(@config) ? 'WARNING' : 'below threshold' %></td>
+      <% AiBudgetCounter::DRIVERS.each do |driver| %><td><%= counter[driver] %></td><% end %>
+      <% %w[input_tokens cached_tokens output_tokens reasoning_tokens embedding_tokens attempts cache_savings].each do |metric| %>
+        <td><%= counter[metric] %></td>
+      <% end %>
+    </tr>
+  <% end %></tbody>
+</table>

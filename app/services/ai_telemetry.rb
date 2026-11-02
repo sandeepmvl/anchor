@@ -153,3 +153,13 @@ ActiveSupport::Notifications.subscribe('anchor.attachment.process') do |*args|
     tenant_id conversation_id request_id]
   AiTelemetry.sink.call({ event: 'anchor.attachment.process' }.merge(payload.slice(*fields)))
 end
+
+ActiveSupport::Notifications.subscribe('anchor.cost.ingested') do |*args|
+  payload = args.last
+  tenant = payload[:tenant_id]
+  inserted = payload[:inserted]
+  unless tenant.is_a?(Integer) && tenant.positive? && [true, false].include?(inserted)
+    raise ArgumentError, 'invalid_cost_diagnostic'
+  end
+  AiTelemetry.sink.call(event: 'anchor.cost.ingested', tenant_id: tenant, inserted: inserted)
+end

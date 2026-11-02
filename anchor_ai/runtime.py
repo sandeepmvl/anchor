@@ -3,7 +3,6 @@ async def run_diagnostic_ticket(runtime, token, service, *, confirmed=False, dry
     from anchor_ai.tools import register_sandbox
     scope = runtime.identity(token)
     registry = register_sandbox({}, service)
-    # Deterministic offline planner: no source code, tenant ID, or authority fields.
     proposal = {'tool': 'run_diagnostic', 'arguments': {'script_id': 'ticket_diagnostic'}}
     tool = registry[proposal['tool']]
     arguments = tool.arguments.model_validate(dict(proposal['arguments'], confirmed=confirmed,
@@ -70,8 +69,6 @@ class BoundedRuntime:
 
     @contextmanager
     def locked(self):
-        # A separate lock database permits checkpoint commits while serializing
-        # competing workers. A process exit releases this SQLite write lock.
         lock = sqlite3.connect(self.path + '.locks', timeout=1)
         try:
             lock.execute('BEGIN IMMEDIATE')
@@ -122,7 +119,6 @@ class BoundedRuntime:
                               proposed_action=s['arguments'], idempotency_key=s['key'],
                               tokens=s['tokens'], steps=s['steps'], calls=s['calls'])
         self.event(s, 'escalation', reason=reason, persisted=True)
-        # Safe projection of durable handoff evidence, never its raw context.
         ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'],
                'parent_span_id': s['trace_id'][:16]}
         with span('python.bounded_agent.handoff', ctx=ctx, tenant_id=s['tenant_id'],
@@ -163,7 +159,6 @@ class BoundedRuntime:
             return s
 
     async def execute(self, token, request):
-        # Identity is checked before loading any run, retrieval, or tool adapter.
         scope = self.identity(token)
         req = AgentRequest.model_validate(request)
         if req.operation in ('approve', 'reject'):
@@ -192,7 +187,6 @@ class BoundedRuntime:
                 self.event(s, 'planner_selection', strategy=strategy)
                 self.save(s)
             elif req.operation == 'start':
-                # Repeating start cannot replace an existing run's arguments.
                 if (req.message != s['message'] or req.order_id != s['arguments']['order_id']
                         or req.amount_cents != s['arguments']['amount_cents']):
                     raise ValueError('run_arguments_changed')
@@ -220,7 +214,7 @@ class BoundedRuntime:
                     return self.stop(s, 'exhausted', 'step_or_token_budget')
                 s['steps'] += 1
                 s['tokens'] += reserve
-                self.save(s)  # Reservation survives provider errors and restarts.
+                self.save(s)
                 try:
                     worker = worker_for(s)
                     if worker is not None:
@@ -237,7 +231,6 @@ class BoundedRuntime:
                 except Exception:
                     return self.stop(s, 'failed', 'model_error')
                 allowed = self.allowed(scope, action, s['arguments'])
-                # A planner may not skip evidence, eligibility, or change the plan.
                 allowed = allowed and action == s['plan'][s['phase']]
                 self.event(s, 'guardrail', action=action, allowed=allowed)
                 attempt = dict(action=action, allowed=allowed, result='proposed')
@@ -248,7 +241,6 @@ class BoundedRuntime:
                 s['pending'] = dict(action=action, reserved=False)
                 self.save(s)
             action = s['pending']['action']
-            # Re-authorize on resume; an approval never grants a tool permission.
             if not self.allowed(scope, action, s['arguments']):
                 return self.stop(s, 'denied', 'authorization_changed')
             if action == 'issue_refund':
@@ -269,7 +261,7 @@ class BoundedRuntime:
                 s['calls'] += 1
                 s['cost_units'] += cost
                 s['pending']['reserved'] = True
-                self.save(s)  # Retrying a pending dispatch does not reserve twice.
+                self.save(s)
             try:
                 with span('python.bounded_agent.tool',
                           stage='retrieval' if action == 'retrieve' else 'tool',
@@ -302,7 +294,6 @@ class BoundedRuntime:
                         evidence=[m['action'] for m in s['memory']],
                         claim='evidence_available',
                         confirmed=bool(s['approval'] and s['approval']['digest'] == s['digest']),
-                        # No unproven production recovery capability is asserted.
                         dry_run=False, reversible=False))
             except Exception:
                 s['attempts'][-1]['result'] = 'error'
@@ -394,7 +385,6 @@ class SemanticAnswerRuntime:
 
         snapshot = fresh()
         eligible = self.cache.eligible(snapshot, query) == 'public_faq'
-        # Bypasses do not embed, store, or dispatch any action from this boundary.
         vector = self.embed(query, snapshot) if eligible else None
         hit = self.cache.lookup(snapshot, query, vector)
         current = fresh()
@@ -419,3 +409,18 @@ def create_batch_runtime(*, adapter, verify, path, config_path='config/batching.
     scheduler = Scheduler(adapter, configuration(config_path), emit=emit)
     return BatchRuntime(scheduler, verify=verify, path=path, production=production,
                         evidence=evidence, tokenizer=tokenizer)
+
+
+@contextmanager
+def verified_cost_scope(collector, *, verify, token, feature, role, model,
+                        logical_call_id=None, window=None):
+    """verify is a trusted execution-token verifier, never request-supplied code."""
+    if not token:
+        raise ContextError('missing_execution_context')
+    identity = verify(token)
+    if (identity is None or type(identity.tenant_id) is not int
+            or identity.tenant_id <= 0 or not identity.role):
+        raise ContextError('unverified_execution_context')
+    with collector.scope(tenant_id=identity.tenant_id, feature=feature, role=role,
+                         model=model, logical_call_id=logical_call_id, window=window):
+        yield identity

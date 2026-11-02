@@ -22,4 +22,6 @@ Rails.application.routes.draw do
   post '/api/realtime_sessions', to: 'api/realtime_sessions#create'
   post '/api/organizations/:organization_id/ai_tasks', to: 'api/ai_tasks#create'
   get '/api/organizations/:organization_id/ai_tasks/:id', to: 'api/ai_tasks#show'
+  post '/api/ai_costs', to: 'api/ai_costs#create'
+  get '/admin/organizations/:organization_id/ai_costs', to: 'admin/ai_costs#index'
 end

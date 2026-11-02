@@ -36,7 +36,6 @@ FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model
           'summary_input_tokens', 'summary_output_cap', 'summary_version',
           'folded_position', 'pending_messages', 'context_fallback'}
 FIELDS.update({'server_ttft_ms', 'stream_total_ms', 'pacing_peak_chars'})
-# These are producer-local durations, not client delivery measurements.
 ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'internal_error', 'provider_bad_request', 'provider_auth_failed',
           'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
@@ -46,8 +45,6 @@ ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'invalid_reasoning_effort', 'invalid_reasoning_limit',
           'unsupported_reasoning_model', 'replay_miss', 'client_disconnect',
           'context_budget_exceeded'}
-
-# Diagnostic metadata only: never include scripts, environment, or stdout.
 FIELDS.update({'sandbox_backend', 'sandbox_exit_reason', 'sandbox_output_bytes'})
 ERRORS.update({'isolation_unavailable', 'capacity_unavailable', 'tenant_quota',
                'unapproved_script', 'sandbox_unauthorized', 'confirmation_required',
@@ -147,7 +144,6 @@ class Span:
 
 @contextmanager
 def span(name, ctx=None, **fields):
-    # Summary events emitted after work must not impersonate retrieval timers.
     timing_name = {'tool': 'tool', 'llm': 'model', 'retrieval': 'retrieval'}.get(
         fields.get('stage'), 'application')
     if name == 'python.dense_rag':
@@ -184,7 +180,6 @@ ERRORS.add('retrieval_deadline')
 FIELDS.update({'analysis_version', 'analysis_calls', 'subquery_count',
                'analysis_fallback', 'analysis_reason'})
 FIELDS.update({'pair_count', 'rerank_ms'})
-
 FIELDS.update({'agent_iteration', 'tool_calls', 'iterations_remaining',
                'tool_calls_remaining', 'agent_exit', 'decision_kind',
                'decision_summary', 'tool_name', 'agent_mode'})
@@ -194,10 +189,8 @@ AGENT_SUMMARIES = {
     'final': 'Policy returned a final answer without a tool call.',
     'sufficient': 'Policy declared the accumulated evidence sufficient.',
 }
-
 FIELDS.update({'query_fingerprint', 'duplicate_query', 'new_chunk_ids',
                'seen_chunk_ids', 'hops_remaining'})
-
 FIELDS.add('tool_call_fingerprint')
 TOOL_ERRORS = {'unknown_tool', 'invalid_json', 'invalid_arguments', 'execution_error'}
 ERRORS.update(TOOL_ERRORS)
@@ -256,7 +249,6 @@ FIELDS.update({'execution_mode', 'task_id', 'call_id', 'interop_protocol',
                'permission_decision', 'permission_reason'})
 ERRORS.add('delegation_rejected')
 ERRORS.add('orchestration_not_configured')
-
 TRAJECTORY_TOOLS = {'none', 'retrieve', 'lookup_order', 'check_refund', 'issue_refund'}
 TRAJECTORY_CLAIMS = {'intake', 'evidence_available', 'observed_answer', 'human_handoff'}
 
@@ -266,7 +258,6 @@ def trajectory_decision(*, kind, tool='none', expected_tool='none',
                         evidence=(), claim, confirmed=False, dry_run=False,
                         reversible=False, human_required=False,
                         handoff_complete=False, success=True):
-    """Safe projection only; authority and expected values come from trusted state."""
     current = CURRENT.get()
     if current is None or type(current.record.get('tenant_id')) is not int:
         raise ValueError('trajectory_scope_missing')
@@ -319,7 +310,6 @@ def realtime_event(session, scope, event, epoch, queue_depth, **fields):
                 epoch=epoch, queue_depth=queue_depth, **fields)
 
 
-# Bounded local-clock latency trees. Never retain prompts or tool arguments.
 import math
 import threading
 from pathlib import Path
@@ -387,7 +377,6 @@ class Profile:
                     'text_events_truncated': False}
             if retained:
                 self.nodes.append(node)
-        # A dropped span's retained descendants remain attached to its parent.
         parent = PARENT.set(node['id'] if retained else PARENT.get())
         try:
             yield node
@@ -414,7 +403,6 @@ class Profile:
                 self.truncated = True
 
     def report(self):
-        # Snapshot under a short lock. Never join threads or wait for work here.
         with self.lock:
             nodes = [dict(n, text_events=list(n['text_events'])) for n in self.nodes]
             truncated = self.truncated
@@ -546,8 +534,6 @@ class LatencyBoundary:
             report = profile.report()
             report['response_completed'] = finished
             report['scope'] = 'python_asgi_not_ingress_or_client_delivery'
-            # Keep the legacy SINK stream compatible with span consumers.
-            # Full waterfalls go to the dedicated sink or structured logger.
             record = {'event': 'latency_profile', 'name': 'python.latency_profile', **report}
             if self.sink is not None:
                 self.sink(record)
@@ -724,3 +710,19 @@ def batch_measurement(record):
         raise ValueError('unsafe_batch_telemetry')
     return dict(batch_size=record['batch_size'], queue_ms=list(waits),
                 outstanding=record['outstanding'])
+
+
+def cost_measurement(event, config):
+    """Safe cost projection; do not send the delivery payload to a log sink."""
+    from anchor_ai.cost_accounting import integer as cost_integer, price
+    cost_integer(event['tenant_id'], 1)
+    for key in ('attempt_id', 'logical_call_id', 'price_version', 'budget_version'):
+        if safe_id(event[key]) is None:
+            raise ValueError('unsafe_cost_metadata')
+    if any(event[k] != config[k] for k in ('price_version', 'budget_version')):
+        raise ValueError('unknown_cost_version')
+    costs = price(event, config)
+    return dict(event='anchor.cost.attempt', tenant_id=event['tenant_id'],
+                attempt_id=event['attempt_id'], logical_call_id=event['logical_call_id'],
+                price_version=event['price_version'], budget_version=event['budget_version'],
+                total=sum(costs.values()), costs=costs)

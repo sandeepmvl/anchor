@@ -495,3 +495,9 @@ def offline_batch_provider():
     """Explicit offline bulk adapter; never selects a live provider implicitly."""
     from anchor_ai.batching import OfflineBatchProvider
     return OfflineBatchProvider()
+
+
+def accounted_provider(provider, collector, *, style='chat'):
+    """Explicit buffered-JSON accounting seam; streaming is not supported here."""
+    from anchor_ai.cost_accounting import AccountingProvider
+    return AccountingProvider(provider, collector, style=style)

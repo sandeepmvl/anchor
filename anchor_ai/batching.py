@@ -41,7 +41,6 @@ class BatchItem(BaseModel):
                               separators=(',', ':'))
         if len(settings.encode()) > 1024:
             raise ValueError('settings_too_large')
-        # Conversations are partitioned as well as tenants: no shared history.
         return (self.tenant_id, self.conversation_id, self.operation,
                 self.model, self.revision, settings)
 
@@ -113,7 +112,6 @@ class Scheduler:
         try:
             return await future
         finally:
-            # Cancelling one waiter never cancels the shared provider call.
             self.wake.set()
 
     async def _pump(self):
@@ -169,7 +167,6 @@ class Scheduler:
         self.wake.set()
 
     async def _deliver(self, key, batch):
-        # Telemetry is numeric and content-free. Do not inherit a caller's span.
         delays = [(asyncio.get_running_loop().time() - p.arrived) * 1000 for p in batch]
         self.emit({'batch_size': len(batch), 'queue_ms': delays,
                    'outstanding': self.pending})
@@ -237,7 +234,6 @@ class OfflineBatchProvider:
         return result
 
     async def submit_job(self, key, records):
-        # Submission returns an identifier, not completed results.
         return 'fake_batch_' + uuid.uuid4().hex
 
 
@@ -292,7 +288,6 @@ class BatchRuntime:
     async def execute(self, token, envelope):
         if not token or self.verify(token, envelope.items) is not True:
             raise PermissionError('batch_scope_rejected')
-        # Authorize and validate the entire envelope before dispatching anything.
         for item in envelope.items:
             self.scheduler.validate(item)
         identities = [(p.tenant_id, p.conversation_id, p.request_id) for p in envelope.items]
@@ -311,8 +306,6 @@ class BatchRuntime:
         return {'items': await asyncio.gather(*(one(p) for p in envelope.items))}
 
     async def _jobs(self, items):
-        # A persisted provider identifier is a submission receipt, not a result.
-        # Callers must not advance AiTask completion on this return value.
         submit = getattr(self.scheduler.adapter, 'submit_job', None)
         if submit is None:
             raise ValueError('async_batch_capability_unavailable')
@@ -368,3 +361,21 @@ def register_batch_routes(app):
             raise HTTPException(403, 'batch_scope_rejected') from None
         except ValueError:
             raise HTTPException(422, 'batch_request_rejected') from None
+
+
+class AccountedBatchAdapter:
+    """scope(key) is trusted composition code authorizing that entire batch."""
+    def __init__(self, adapter, collector, *, scope):
+        self.adapter, self.collector, self.scope = adapter, collector, scope
+        self.fixture = getattr(adapter, 'fixture', True)
+
+    async def call(self, key, records):
+        from anchor_ai.cost_accounting import ACTIVE_COST, account_batch
+        with self.scope(key):
+            state = ACTIVE_COST.get()
+            if state is None or state['tenant_id'] != key[0] or state['model'] != key[3]:
+                raise PermissionError('batch_cost_scope_rejected')
+            embedding = state['role'] in {'first_query_embedding', 'extra_query_embedding'}
+            if embedding != (key[2] == 'embedding'):
+                raise ValueError('batch_cost_role_mismatch')
+            return await account_batch(self.adapter, key, records, self.collector)

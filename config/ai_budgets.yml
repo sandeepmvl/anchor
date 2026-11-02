@@ -1,0 +1,15 @@
+{
+  "price_version": "fake-prices-v1",
+  "budget_version": "feature-budgets-v1",
+  "unit": "demo_microcredits",
+  "fixture": true,
+  "models": {
+    "standard": {"input": 2, "cached": 1, "output": 6},
+    "premium": {"input": 4, "cached": 2, "output": 12},
+    "embedding": {"embedding": 1}
+  },
+  "budgets": {
+    "chat": {"limit": 40000, "warning_percent": 80},
+    "rag": {"limit": 30000, "warning_percent": 80}
+  }
+}
