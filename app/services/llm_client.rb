@@ -34,7 +34,11 @@ class LlmClient
   end
 
   def initialize(provider: Rails.configuration.x.llm.fetch(:provider))
-    @provider = provider
+    backend = ENV.fetch('LLM_BACKEND', 'hosted')
+    raise ArgumentError, 'unknown inference backend' unless %w[hosted self_hosted].include?(backend)
+    # Keep the Rails -> Python service boundary, including its secret and deadlines.
+    @provider = backend == 'self_hosted' ? 'http' : provider
+    @backend = backend
   end
 
   def complete(message, contract: nil)
@@ -157,6 +161,8 @@ class LlmClient
     response = http.request(request)
     status = response.code.to_i
     span.set(status_code: status)
+    AiTelemetry.inference_backend(backend: @backend,
+      transport: ENV.fetch('ANCHOR_VLLM_TRANSPORT', 'offline')) if @backend == 'self_hosted'
     structured_failure(response) if structured && status == 422
     provider_failure(response, status) unless (200..299).cover?(status)
     fail_boundary("ai_auth_rejected", 502) if status == 401

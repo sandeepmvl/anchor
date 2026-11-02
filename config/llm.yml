@@ -9,3 +9,6 @@ shared:
   # Explicit AI-service composition only; this does not reroute existing Rails callers.
   provider_routing_policy: config/provider_routing.yml
   provider_routing_enabled: false
+  # Both processes receive this operator setting; never accept it from params.
+  backend: <%= ENV.fetch("LLM_BACKEND", "hosted").inspect %>
+  self_hosted_transport: <%= ENV.fetch("ANCHOR_VLLM_TRANSPORT", "offline").inspect %>

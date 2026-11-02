@@ -33,3 +33,16 @@ artifacts:
     port: 8765
     supported_formats: [fp16, gptq, awq]
     approval_required: true
+serving_adapter:
+  backend: self_hosted
+  transport_environment: ANCHOR_VLLM_TRANSPORT
+  default_transport: offline
+  base_url_environment: LLM_BASE_URL
+  default_base_url: http://127.0.0.1:8765/v1
+  deployment_specification: ops/deploy/vllm_service.yml
+  runtime: vllm==0.8.5
+  format: awq
+  architecture: LlamaForCausalLM
+  attempt_timeout_seconds: 2
+  sdk_retries: 0
+  production_release_evidence_required: true

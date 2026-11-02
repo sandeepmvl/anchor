@@ -1,0 +1,30 @@
+version: 1
+runtime: vllm==0.8.5
+artifact:
+  path: /srv/anchor/models/approved
+  format: awq
+  architecture: LlamaForCausalLM
+  approval_required: true
+  manifest: /srv/anchor/models/approved/anchor-artifact-manifest.json
+command:
+  - vllm
+  - serve
+  - /srv/anchor/models/approved
+  - --quantization
+  - awq
+  - --served-model-name
+  - tiny-llama
+  - --host
+  - 127.0.0.1
+  - --port
+  - '8765'
+  - --max-model-len
+  - '512'
+  - --max-num-seqs
+  - '8'
+readiness:
+  path: /v1/models
+  expected_model: tiny-llama
+release:
+  real_evidence_required: true
+  required_evidence: [artifact_digest, gpu_identity, startup_log, quality_gate, authenticated_ticket_trace, latency_report]

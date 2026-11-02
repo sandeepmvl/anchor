@@ -371,7 +371,10 @@ class LlmClient:
         offline = offline or getattr(self.provider, 'vision_offline', False) is True
         with span('llm.call', stage='provider', request_model=model,
                   response_model=None, currency='USD', price_version=PRICE_VERSION,
-                  cost_basis='offline_replay_estimate' if offline else 'published_price_estimate') as telemetry:
+                  cost_basis=('self_hosted_usage_not_hosted_price'
+                              if getattr(self.provider, 'backend_name', None) == 'self_hosted'
+                              else 'offline_replay_estimate' if offline
+                              else 'published_price_estimate')) as telemetry:
             self.telemetry = telemetry
             try:
                 if contract is not None:

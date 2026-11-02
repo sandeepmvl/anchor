@@ -24,6 +24,17 @@ class AiTelemetry
       @sink ||= ->(record) { $stdout.puts(JSON.generate(record)) }
     end
 
+    def inference_backend(backend:, transport:)
+      unless backend == 'self_hosted' && %w[offline live].include?(transport)
+        raise ArgumentError, 'invalid_inference_backend_diagnostic'
+      end
+      parent = current
+      identity = parent ? parent.record.slice(:trace_id, :span_id, :request_id,
+        :tenant_id, :conversation_id) : {}
+      sink.call({ event: 'anchor.inference.backend', backend: backend,
+        transport: transport }.merge(identity))
+    end
+
     def realtime_issuance(status:)
       raise ArgumentError, 'invalid_realtime_status' unless %w[issued denied].include?(status)
       sink.call(event: 'anchor.realtime.issuance', status: status)

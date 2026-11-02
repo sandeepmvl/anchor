@@ -103,6 +103,11 @@ class RoutingProvider:
             raise ValueError('nested_provider_retries')
         if any(getattr(a, 'max_retries', 0) != 0 for a in adapters.values()):
             raise ValueError('nested_provider_retries')
+        adapters = dict(adapters)
+        for name, deployment in self.config['deployments'].items():
+            if deployment.get('backend') == 'self_hosted' and name not in adapters:
+                from anchor_ai.vllm_backend import VllmBackend
+                adapters[name] = VllmBackend(model=deployment['model'])
         self.adapters, self.collector, self.clock = adapters, collector, clock or time.monotonic
         self.health = {n: {'failures': 0, 'degraded': False, 'next_probe': 0}
                        for n in self.config['order']}
@@ -483,6 +488,12 @@ class LiveProvider:
 
 
 def configured_provider():
+    backend = os.environ.get('LLM_BACKEND', 'hosted')
+    if backend == 'self_hosted':
+        from anchor_ai.vllm_backend import VllmBackend
+        return VllmBackend()
+    if backend != 'hosted':
+        raise ProviderError('invalid_provider_mode', status=503)
     mode = os.environ.get('ANCHOR_LLM_MODE', 'offline')
     if mode == 'offline':
         state = os.environ.get('ANCHOR_MODEL_RELEASE_STATE')
