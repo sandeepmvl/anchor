@@ -113,6 +113,8 @@ class CheckpointStore:
         return dict(row)
 
     def approval(self, thread, token, expected_key=None, reference=None):
+        # Escalation review is not a safe-action proposal receipt. The Rails
+        # executor separately checks actor, tenant, exact arguments and expiry.
         row = self.inspect(thread, token)
         claims = actor_claims(token)
         if expected_key is not None and row['action_key'] != expected_key:

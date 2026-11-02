@@ -294,3 +294,119 @@ def test_rails_backend_denial_has_no_replay_fallback():
                     amount_cents=100, idempotency_key='refund_1'))
     assert len(calls) == 1
     assert calls[0]['arguments']['order_id'] == 'B204'
+
+
+@pytest.mark.parametrize('name', ['issue_refund', 'update_address'])
+@pytest.mark.parametrize('change', ['actor', 'tenant', 'resource', 'arguments', 'expiry'])
+def test_exact_expiring_confirmation_for_consequential_tools(name, change):
+    from anchor_ai.autonomy import ExecutionRun
+    from anchor_ai.tools import Tool, dispatch
+    from pydantic import BaseModel, ConfigDict
+
+    class Arguments(BaseModel):
+        model_config = ConfigDict(extra='forbid')
+        order_id: str
+        amount_cents: int
+
+    class Result(BaseModel):
+        status: str
+
+    invocations = []
+    async def write(**kwargs):
+        invocations.append(kwargs)
+        return {'status': 'changed'}
+
+    scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+    scope._execution['actor_id'] = 'authenticated-agent-7'
+    now = [0.0]
+    run = ExecutionRun(scope, clock=lambda: now[0])
+    arguments = {'order_id': 'A100', 'amount_cents': 100}
+    proposal = call('exact', name, arguments)
+    token = run.confirm(scope, proposal, arguments)
+    run.approve(scope, proposal, arguments, confirmation=token, idempotency_key='exact_action_1')
+    if change == 'actor':
+        scope._execution['actor_id'] = 'different-agent'
+    elif change == 'tenant':
+        scope = ToolScope(tenant_id=2, conversation_id=7, role='support_supervisor')
+    elif change == 'resource':
+        proposal = call('exact', name, dict(arguments, order_id='A101'))
+    elif change == 'arguments':
+        proposal = call('exact', name, dict(arguments, amount_cents=200))
+    else:
+        now[0] = 31.0
+    registry = {name: Tool('Confirmed write', Arguments, Result, write, consequential=True)}
+    try:
+        result = asyncio.run(dispatch(proposal, registry, scope, run=run))
+        assert result['payload']['ok'] is False
+    except ValueError as error:
+        assert str(error) == 'execution_scope_mismatch'
+    assert invocations == []
+
+
+@pytest.mark.parametrize('name', ['issue_refund', 'update_address'])
+def test_exact_unexpired_confirmation_executes(name):
+    from anchor_ai.autonomy import ExecutionRun
+    from anchor_ai.tools import Tool, dispatch
+    from pydantic import BaseModel
+
+    class Arguments(BaseModel):
+        order_id: str
+        amount_cents: int
+
+    class Result(BaseModel):
+        status: str
+
+    calls = []
+    async def write(**kwargs):
+        calls.append(kwargs)
+        return {'status': 'changed'}
+    scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+    scope._execution['actor_id'] = 'authenticated-agent-7'
+    run = ExecutionRun(scope)
+    arguments = {'order_id': 'A100', 'amount_cents': 100}
+    proposal = call('confirmed', name, arguments)
+    token = run.confirm(scope, proposal, arguments)
+    run.approve(scope, proposal, arguments, confirmation=token, idempotency_key='confirmed_1')
+    result = asyncio.run(dispatch(proposal, {
+        name: Tool('Write', Arguments, Result, write, consequential=True)}, scope, run=run))
+    assert result['payload']['ok'] is True
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('name', ['issue_refund', 'update_address'])
+def test_confirmation_expires_before_run_deadline(name):
+    from anchor_ai.autonomy import ExecutionRun
+    scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+    scope._execution['actor_id'] = 'authenticated-agent-7'
+    now = [0.0]
+    run = ExecutionRun(scope, clock=lambda: now[0])
+    run.policy['run']['confirmation_ttl_seconds'] = 1
+    arguments = {'order_id': 'A100', 'amount_cents': 100}
+    proposal = call('short_confirmation', name, arguments)
+    token = run.confirm(scope, proposal, arguments)
+    run.approve(scope, proposal, arguments, confirmation=token,
+                idempotency_key='short_confirmation_1')
+    now[0] = 2.0
+    assert now[0] < run.deadline
+    reason, key = asyncio.run(run.admit(scope, name, arguments))
+    assert reason == 'confirmation_required'
+    assert key is None
+
+
+def test_rails_dry_run_uses_authorized_preview_without_execution():
+    from anchor_ai.autonomy import ExecutionRun
+    from anchor_ai.tools import dispatch
+    calls = []
+    async def transport(path, body, credential):
+        calls.append((path, body, credential))
+        return {'ok': True, 'data': {'dry_run': True, 'before_balance_cents': 10000,
+                'after_balance_cents': 9900, 'proposal_receipt': 'signed-proposal'}}
+    backend = RailsOrderBackend(authenticated_execution(), transport, clock=lambda: 100)
+    scope = ToolScope(tenant_id=1, conversation_id=7, role='support_supervisor')
+    result = asyncio.run(dispatch(call('preview', 'issue_refund', {
+        'order_id': 'A104', 'amount_cents': 100}), registry_for(backend), scope,
+        run=ExecutionRun(scope, dry_run=True)))
+    assert result['payload']['data']['after_balance_cents'] == 9900
+    assert [item[0] for item in calls] == ['/api/tool_actions/preview']
+    assert 'approval_receipt' not in calls[0][1]
+    assert registry_for(backend)['lookup_order'].consequential is False

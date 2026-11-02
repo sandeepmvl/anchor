@@ -49,6 +49,7 @@ class Tool:
     consequential: bool = False
     authorize: Callable | None = None
     external_server: str | None = None
+    preview: Callable | None = None
 
 
 def normalize(api, response):
@@ -171,7 +172,8 @@ def registry_for(backend, *, mcp_client=None):
                              OrderToolArguments, RefundToolResult, backend.check_refund, authorize=backend.owns),
         'issue_refund': Tool('Issue a refund only after trusted approval.',
                              RefundArguments, IssuedRefundResult, backend.issue_refund,
-                             consequential=True, authorize=backend.owns),
+                             consequential=True, authorize=backend.owns,
+                             preview=getattr(backend, 'preview_refund', None)),
     }
     return mcp_client.wrap(registry) if mcp_client is not None else registry
 
@@ -425,6 +427,16 @@ class RailsOrderBackend:
 
     async def check_refund(self, *, scope, order_id):
         return await self._send('check_refund', scope, {'order_id': order_id})
+
+    async def preview_refund(self, *, scope, order_id, amount_cents):
+        execution = self._context(scope)
+        arguments = RefundArguments.model_validate({
+            'order_id': order_id, 'amount_cents': amount_cents}).model_dump()
+        response = await self.transport('/api/tool_actions/preview', {
+            'action': 'issue_refund', 'arguments': arguments}, execution.session_cookie)
+        if not isinstance(response, dict) or response.get('ok') is not True:
+            raise PermissionError('backend_authorization_denied')
+        return response['data']
 
     async def issue_refund(self, *, scope, order_id, amount_cents, idempotency_key):
         return await self._send('issue_refund', scope,

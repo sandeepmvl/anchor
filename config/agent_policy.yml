@@ -5,6 +5,7 @@ run:
   max_cost_units: 16
   deadline_seconds: 30
   max_tokens: 96
+  confirmation_ttl_seconds: 300
 bounded:
   call_timeout_seconds: 2
   strategies:
@@ -12,11 +13,11 @@ bounded:
     multi-step refund: plan_execute
 tools:
   retrieve: {mode: read, cost_units: 1}
-  lookup_order: {mode: read, cost_units: 1}
+  lookup_order: {mode: read, cost_units: 1, impact: low, recovery: read_only}
   check_refund: {mode: read, cost_units: 1}
-  issue_refund: {mode: approval, cost_units: 3}
+  issue_refund: {mode: approval, cost_units: 3, impact: high, recovery: local_compensation_only}
   verify_identity: {mode: read, cost_units: 1}
-  update_address: {mode: approval, cost_units: 3}
+  update_address: {mode: approval, cost_units: 3, impact: high, recovery: authoritative_undo_receipt}
   confirm_change: {mode: read, cost_units: 1}
   report_blocked: {mode: read, cost_units: 1}
 tenants:

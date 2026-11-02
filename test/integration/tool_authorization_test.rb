@@ -18,7 +18,11 @@ class ToolAuthorizationTest < ActionController::TestCase
 
   setup do
     @routes = ActionDispatch::Routing::RouteSet.new
-    @routes.draw { post '/api/tool_actions', to: 'authorization_probe#create' }
+    @routes.draw do
+      post '/api/tool_actions', to: 'authorization_probe#create'
+      post '/api/tool_actions/preview', to: 'authorization_probe#preview'
+      post '/api/tool_actions/confirm', to: 'authorization_probe#confirm'
+    end
     suffix = SecureRandom.hex(6)
     @local = Organization.create!(name: "Authz local #{suffix}")
     @foreign = Organization.create!(name: "Authz foreign #{suffix}")
@@ -55,16 +59,35 @@ class ToolAuthorizationTest < ActionController::TestCase
   end
 
   test 'approved local refund reaches executor and retry does not double refund' do
-    body = proposal
+    body = proposal.except(:approval_receipt)
+    post :preview, body: body.slice(:action, :arguments).to_json, as: :json
+    assert_response :success
+    preview = response.parsed_body.fetch('data')
+    assert_equal true, preview.fetch('dry_run')
+    assert_equal 0, @order.reload.refunded_cents
+
+    post :confirm, body: body.merge(
+      proposal_receipt: preview.fetch('proposal_receipt')).to_json, as: :json
+    assert_response :success
+    confirmation = response.parsed_body.fetch('data')
+    body[:approval_receipt] = confirmation.fetch('approval_receipt')
+    action = ToolAction.find(confirmation.fetch('tool_action_id'))
+    assert_equal 'confirmed', action.status
+    assert_equal 0, @order.reload.refunded_cents
+
     submit(body)
     assert_response :success
-    assert_equal 1, @controller.executor_calls
+    first_result = response.parsed_body.fetch('data')
+    assert_equal 'executed', action.reload.status
+    assert_equal 1, action.action_reversal_logs.where(event: 'execution').count
     assert_equal 100, @order.reload.refunded_cents
     submit(body)
     assert_response :success
+    assert_equal first_result, response.parsed_body.fetch('data')
     assert_equal 100, @order.reload.refunded_cents
+    assert_equal 1, action.action_reversal_logs.where(event: 'execution').count
     assert_equal 0, @other.reload.refunded_cents
-    puts 'PASS local approved refund: executor reached; repeat-safe ledger'
+    puts 'PASS local confirmed refund: audited executor reached once; repeat-safe ledger'
   end
 
   test 'foreign order with otherwise valid approval stops before executor' do

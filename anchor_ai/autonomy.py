@@ -19,7 +19,8 @@ def load_policy():
 
 
 def fingerprint(scope, name, arguments):
-    value = [scope.tenant_id, scope.role, name, arguments]
+    value = [scope.tenant_id, scope.conversation_id, scope.role,
+             scope._execution.get('actor_id'), name, arguments]
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
@@ -46,6 +47,7 @@ class ExecutionRun:
         self.halted = False
         self.lock = asyncio.Lock()
         self.confirmations = {}
+        self.confirmation_expiries = {}
         self.approvals = {}
         self.events = []
         self.escalation = None
@@ -63,6 +65,10 @@ class ExecutionRun:
             raise ValueError('invalid_confirmation_context')
         token = secrets.token_urlsafe(24)
         self.confirmations[token] = fingerprint(scope, call.name, arguments)
+        # Confirmation lifetime and run lifetime are separate gates.
+        # A resumed expired run must reach admission's durable deadline denial.
+        self.confirmation_expiries[token] = (
+            self.clock() + self.policy['run']['confirmation_ttl_seconds'])
         return token
 
     def approve(self, scope, call, arguments, *, confirmation, idempotency_key):
@@ -70,7 +76,9 @@ class ExecutionRun:
         if not self.matches(scope):
             raise ValueError('invalid_confirmation_context')
         bound = fingerprint(scope, call.name, arguments)
-        if (self.confirmations.get(confirmation) != bound or not isinstance(idempotency_key, str)
+        if (self.confirmations.get(confirmation) != bound
+                or self.clock() >= self.confirmation_expiries.get(confirmation, 0)
+                or not isinstance(idempotency_key, str)
                 or not 8 <= len(idempotency_key) <= 200):
             raise ValueError('invalid_confirmation')
         self.approvals[bound] = (confirmation, idempotency_key)
@@ -124,12 +132,14 @@ class ExecutionRun:
             if spec['mode'] == 'approval':
                 amount = arguments.get('amount_cents')
                 reviewed = fingerprint(scope, name, arguments) in self.review_grants
-                if type(amount) is not int or amount <= 0 or (amount > tenant['refund_ceiling_cents'] and not reviewed):
+                if name == 'issue_refund' and (type(amount) is not int or amount <= 0
+                        or (amount > tenant['refund_ceiling_cents'] and not reviewed)):
                     return self.denied(scope, 'argument_policy')
                 if not self.dry_run:
                     bound = fingerprint(scope, name, arguments)
                     grant = self.approvals.get(bound)
-                    if not grant or self.confirmations.get(grant[0]) != bound:
+                    if (not grant or self.confirmations.get(grant[0]) != bound
+                            or self.clock() >= self.confirmation_expiries.get(grant[0], 0)):
                         return self.denied(scope, 'confirmation_required')
                     key = grant[1]
             estimated = spec['cost_units']
@@ -184,6 +194,13 @@ async def guarded_dispatch(call, registry, scope, execute, run=None):
     if error:
         return {'call_id': call.call_id, 'payload': {'ok': False, 'error': error}}
     if tool.consequential and state.dry_run:
+        if tool.preview is not None:
+            try:
+                data = await tool.preview(scope=scope, **arguments)
+                return {'call_id': call.call_id, 'payload': {'ok': True, 'data': data}}
+            except Exception:
+                state.halted = True
+                return {'call_id': call.call_id, 'payload': {'ok': False, 'error': 'execution_error'}}
         return {'call_id': call.call_id, 'payload': {'ok': True, 'data': {
             'dry_run': True, 'proposed_action': call.name, 'arguments': arguments}}}
     result = await execute(call, registry, scope, idempotency_key=key)
