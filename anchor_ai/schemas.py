@@ -153,3 +153,27 @@ class RetrievalPlan(BaseModel):
 
 class AnalyzedResponse(HybridResponse):
     plan: RetrievalPlan
+
+
+from typing import Literal
+
+
+class RagRequest(DenseRagRequest):
+    mode: Literal['single', 'multi'] = 'single'
+    top_k: int = Field(default=1, ge=1, le=20)
+
+
+class MultiHopPlan(QueryPlanPayload):
+    @model_validator(mode='after')
+    def dependency(self):
+        if len(self.queries) != 2:
+            raise ValueError('expected_two_slots')
+        first, second = self.queries
+        if '{' in first or '}' in first:
+            raise ValueError('invalid_first_slot')
+        if second.count('{eligibility_class}') != 1:
+            raise ValueError('missing_class_binding')
+        remainder = second.replace('{eligibility_class}', '')
+        if '{' in remainder or '}' in remainder:
+            raise ValueError('unsupported_binding')
+        return self

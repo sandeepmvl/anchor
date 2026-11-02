@@ -36,7 +36,23 @@ class RagRuntime:
         self.emit = emit or (lambda record: None)
         self.evidence_budget = evidence_budget
 
-    async def answer(self, question, k=3, *, request_id, trace_id):
+    async def answer(self, question, k=3, *, request_id, trace_id,
+                     mode='single', max_hops=None):
+        if mode not in ('single', 'multi'):
+            raise ValueError('invalid_rag_mode')
+        if mode == 'multi':
+            from anchor_ai.multihop import MultiHopRuntime, settings
+            config = settings()
+            limit = config['max_hops']
+            if max_hops is not None:
+                limit = min(limit, max_hops)
+            runtime = MultiHopRuntime(self.retriever, self.client, emit=self.emit,
+                                      evidence_budget=self.evidence_budget,
+                                      max_hops=limit)
+            result = await runtime.answer(question, k, request_id=request_id,
+                                          trace_id=trace_id)
+            self.last_trajectory = getattr(runtime, 'last_trajectory', [])
+            return result
         started = time.monotonic()
         if len(question.encode('utf-8')) > 1800:
             raise ValueError('current_question_budget_exceeded')
@@ -179,3 +195,20 @@ def published_hybrid_rag_runtime(tenant_id, acquire_snapshot, dense_search, spar
                                      dense_search, sparse_search, **settings)
     generation = client if client is not None else ExistingClientAdapter(LlmClient())
     return RagRuntime(hybrid, generation, emit=emit, evidence_budget=evidence_budget)
+
+
+def published_bounded_rag_runtime(tenant_id, acquire_snapshot, dense_search,
+                                  sparse_search, client=None, emit=None, **settings):
+    from anchor_ai.multihop import model_client, settings as multihop_settings
+    snapshot = acquire_snapshot(tenant_id)
+
+    def pinned_snapshot(requested_tenant):
+        if requested_tenant != tenant_id:
+            raise ValueError('runtime_scope_mismatch')
+        return snapshot
+
+    hybrid = published_hybrid_runtime(tenant_id, pinned_snapshot,
+                                     dense_search, sparse_search, **settings)
+    return RagRuntime(hybrid, client if client is not None else model_client(),
+                      emit=emit,
+                      evidence_budget=multihop_settings()['evidence_budget_bytes'])

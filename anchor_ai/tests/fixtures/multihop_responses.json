@@ -1,0 +1,40 @@
+{
+  "ticket": "Is my engraved order refundable 20 days after delivery?",
+  "tenant_id": 1,
+  "generation_id": "multihop-fixture-v1",
+  "documents": [
+    {
+      "id": 701,
+      "tenant_id": 1,
+      "text": "Engraved order policy: eligibility class = CustomCare."
+    },
+    {
+      "id": 702,
+      "tenant_id": 1,
+      "text": "CustomCare refund eligibility: window = 14 days after delivery."
+    },
+    {
+      "id": 703,
+      "tenant_id": 1,
+      "text": "General refund FAQ: Standard orders have a 30-day window."
+    },
+    {
+      "id": 704,
+      "tenant_id": 2,
+      "text": "CustomCare refund eligibility: window = 90 days after delivery."
+    }
+  ],
+  "plan": {
+    "queries": ["engraved order policy", "{eligibility_class} refund eligibility"]
+  },
+  "synthesis": {
+    "reply": "No: engraved orders use CustomCare, whose refund window is 14 days after delivery. Twenty days exceeds that window.",
+    "citations": [701, 702],
+    "abstained": false
+  },
+  "abstention": {
+    "reply": "I could not find a supporting policy in your documents.",
+    "citations": [],
+    "abstained": true
+  }
+}

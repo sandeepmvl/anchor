@@ -280,3 +280,46 @@ async def analyzed_retrieve(
     except Exception:
         item.fail('retrieval_failed', 422)
         raise HTTPException(status_code=422, detail='retrieval_failed') from None
+
+
+from anchor_ai.schemas import RagRequest
+
+
+@app.post('/v1/rag', response_model=DenseRagResponse)
+async def bounded_rag(
+    body: RagRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    factory = getattr(app.state, 'bounded_rag_runtime_factory', None)
+    if factory is None:
+        if os.environ.get('ANCHOR_MULTIHOP_FIXTURE') != '1' or body.tenant_id != 1:
+            item.fail('retrieval_not_configured', 503)
+            raise HTTPException(status_code=503, detail='retrieval_not_configured')
+        from anchor_ai.multihop import fixture_runtime
+        factory = fixture_runtime
+    item.set(stage='retrieval')
+    try:
+        runtime = factory(tenant_id=body.tenant_id, emit=emit_retrieval)
+        if runtime.retriever.tenant_id != body.tenant_id:
+            raise ValueError('runtime_scope_mismatch')
+        return await runtime.answer(body.message, body.top_k, mode=body.mode,
+            request_id=item.record['request_id'], trace_id=item.record['trace_id'])
+    except TimeoutError:
+        item.fail('retrieval_deadline', 504)
+        raise HTTPException(status_code=504, detail='retrieval_deadline') from None
+    except ProviderError as error:
+        item.fail(error.code, error.status)
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
+    except ValueError:
+        item.fail('retrieval_failed', 422)
+        raise HTTPException(status_code=422, detail='retrieval_failed') from None

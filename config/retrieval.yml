@@ -11,7 +11,7 @@ embeddings:
       dimensions: 1536
     voyage:
       model: voyage-3.5
-      revision: anchor-voyage-1024-v1
+      revision: voyage-1024-v1
       dimensions: 1024
 
 # Chunking consumes normalized document text, not original HTML bytes.
@@ -92,3 +92,10 @@ query_analysis:
   max_tokens: 256
   fixture_env: ANCHOR_QUERY_FIXTURE
   url: http://127.0.0.1:8000/v1/retrieve/analyzed
+
+multihop:
+  max_hops: 2
+  evidence_budget_bytes: 2400
+  mode_env: ANCHOR_LLM_MODE
+  fixture_env: ANCHOR_MULTIHOP_FIXTURE
+  url: http://127.0.0.1:8000/v1/rag
