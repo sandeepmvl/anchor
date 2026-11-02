@@ -166,3 +166,13 @@ ERRORS.add('retrieval_deadline')
 FIELDS.update({'analysis_version', 'analysis_calls', 'subquery_count',
                'analysis_fallback', 'analysis_reason'})
 FIELDS.update({'pair_count', 'rerank_ms'})
+
+FIELDS.update({'agent_iteration', 'tool_calls', 'iterations_remaining',
+               'tool_calls_remaining', 'agent_exit', 'decision_kind',
+               'decision_summary', 'tool_name', 'agent_mode'})
+ERRORS.update({'agent_invalid_decision', 'agent_scope_mismatch', 'agent_tool_failed'})
+AGENT_SUMMARIES = {
+    'retrieve': 'Request another targeted search.',
+    'final': 'Policy returned a final answer without a tool call.',
+    'sufficient': 'Policy declared the accumulated evidence sufficient.',
+}

@@ -103,3 +103,10 @@ multihop:
 graph:
   max_depth: 3
   max_expansions: 100
+
+agentic:
+  max_iterations: 6
+  max_tool_calls: 4
+  evidence_budget_bytes: 2400
+  mode_env: ANCHOR_LLM_MODE
+  policy_timeout_seconds: 20

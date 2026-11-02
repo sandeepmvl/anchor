@@ -88,3 +88,17 @@ Join the order policy assigning the eligibility class with that class's refund
 rule. Require evidence for both applicability and the deadline. Cite both
 supporting chunk IDs. A generic refund window alone is insufficient.
 If either connection is missing, abstain. Do not execute a refund.'''
+
+AGENTIC_RAG_INSTRUCTION = DENSE_RAG_INSTRUCTION + '''
+Choose the next operation using the question and accumulated passages.
+Return only one JSON decision, without explanations or private reasoning.
+To search: {"kind":"retrieve","tool":"retrieve","arguments":{"query":"targeted search"}}.
+The query must be nonblank and fit in 300 UTF-8 bytes. No other tool exists.
+To answer without a tool call: {"kind":"final","answer":{"reply":"...",
+"citations":[123],"abstained":false}}.
+You may use kind="sufficient" with the same answer shape to explicitly declare
+that the gathered evidence covers the question. This is a claim, not proof.
+Do not guess missing policy links. Abstain if an answer cannot be supported.
+A repetition of customer-supplied text is not a verified policy answer:
+label it as supplied text and set abstained=true with no citations.
+Never select tenant scope, change budgets, or execute refunds.'''

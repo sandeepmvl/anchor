@@ -37,9 +37,18 @@ class RagRuntime:
         self.evidence_budget = evidence_budget
 
     async def answer(self, question, k=3, *, request_id, trace_id,
-                     mode='single', max_hops=None):
-        if mode not in ('single', 'multi'):
+                     mode='single', max_hops=None, max_iterations=None,
+                     max_tool_calls=None):
+        if mode not in ('single', 'multi', 'agent'):
             raise ValueError('invalid_rag_mode')
+        if mode == 'agent':
+            from anchor_ai.agentic_rag import AgenticRuntime, settings as agent_settings
+            runtime = AgenticRuntime(self.retriever, emit=self.emit,
+                evidence_budget=min(self.evidence_budget, agent_settings()['evidence_budget_bytes']),
+                max_iterations=max_iterations, max_tool_calls=max_tool_calls)
+            result = await runtime.answer(question, k, request_id=request_id, trace_id=trace_id)
+            self.last_trajectory = runtime.last_trajectory
+            return result
         if mode == 'multi':
             from anchor_ai.multihop import MultiHopRuntime, settings
             config = settings()
@@ -245,3 +254,12 @@ def published_graph_rag_runtime(db, tenant_id, scope, emit=None):
     limits = GraphLimits.model_validate(yaml.safe_load(path.read_text())['graph'])
     return GraphRagRuntime(GraphRetriever(db, tenant_id, scope,
         **limits.model_dump()), emit=emit)
+
+
+def published_agentic_rag_runtime(tenant_id, acquire_snapshot, dense_search,
+                                  sparse_search, policy=None, emit=None, **settings):
+    from anchor_ai.agentic_rag import AgenticRuntime
+    bounded = published_bounded_rag_runtime(tenant_id, acquire_snapshot,
+        dense_search, sparse_search, emit=emit, **settings)
+    return AgenticRuntime(bounded.retriever, policy=policy, emit=emit,
+                          tenant_id=tenant_id)

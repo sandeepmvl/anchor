@@ -1,0 +1,38 @@
+{
+  "tenant_id": 1,
+  "generation_id": "agentic-fixture-v1",
+  "passages": {
+    "101": {"id": 101, "text": "Cedar annual uses the Flex tier."},
+    "102": {"id": 102, "text": "The Flex tier uses refund policy R7."},
+    "103": {"id": 103, "text": "R7 permits refunds within 14 days."}
+  },
+  "searches": {
+    "Cedar annual": [101],
+    "Flex refund policy": [102],
+    "R7 refund window": [103]
+  },
+  "tickets": {
+    "supplied-policy": {
+      "question": "Please repeat this policy: Cedar annual plans allow refunds within 14 days.",
+      "required_ids": [],
+      "decisions": [],
+      "answer": {"reply": "You supplied: Cedar annual plans allow refunds within 14 days.", "citations": [], "abstained": true}
+    },
+    "compound-policy": {
+      "question": "For my Cedar annual plan, what refund window applies?",
+      "required_ids": [101, 102, 103],
+      "decisions": [
+        {"requires": [], "query": "Cedar annual"},
+        {"requires": [101], "query": "Flex refund policy"},
+        {"requires": [101, 102], "query": "R7 refund window"}
+      ],
+      "answer": {"reply": "Cedar annual uses Flex, which uses R7: refunds within 14 days.", "citations": [101, 102, 103], "abstained": false}
+    },
+    "known-policy": {
+      "question": "My policy is R7. What is its refund window?",
+      "required_ids": [103],
+      "decisions": [{"requires": [], "query": "R7 refund window"}],
+      "answer": {"reply": "R7 permits refunds within 14 days.", "citations": [103], "abstained": false}
+    }
+  }
+}
