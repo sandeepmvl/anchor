@@ -1,0 +1,32 @@
+{
+  "tenant_id": 1,
+  "generation_id": "refund-replay-v1",
+  "question": "Can I get a refund after 45 days?",
+  "passages": {
+    "101": {"id": 101, "text": "Contact support for policy questions."},
+    "102": {"id": 102, "text": "Find receipts on your account orders page."},
+    "103": {"id": 103, "text": "Support hours appear on the contact page."},
+    "104": {"id": 104, "text": "The contact form accepts support requests."}
+  },
+  "searches": {
+    "refund policy": [101, 102],
+    "  REFUND   POLICY  ": [101, 102],
+    "refund eligibility at forty-five days": [102, 101],
+    "contact instructions": [101],
+    "receipt instructions": [102],
+    "support hours": [103],
+    "contact form": [104],
+    "nothing relevant": []
+  },
+  "trajectories": {
+    "duplicate_query": ["refund policy", "  REFUND   POLICY  "],
+    "repeated_evidence": ["refund policy", "refund eligibility at forty-five days"],
+    "productive": ["contact instructions", "receipt instructions", "support hours", "contact form"],
+    "alternating": ["contact instructions", "receipt instructions", "contact instructions"],
+    "empty": ["nothing relevant"]
+  },
+  "synthetic_per_call": {
+    "latency_ms": 1050,
+    "cost_usd": 0.001
+  }
+}

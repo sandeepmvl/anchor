@@ -176,3 +176,6 @@ AGENT_SUMMARIES = {
     'final': 'Policy returned a final answer without a tool call.',
     'sufficient': 'Policy declared the accumulated evidence sufficient.',
 }
+
+FIELDS.update({'query_fingerprint', 'duplicate_query', 'new_chunk_ids',
+               'seen_chunk_ids', 'hops_remaining'})

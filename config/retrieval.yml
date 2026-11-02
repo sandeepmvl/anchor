@@ -110,3 +110,4 @@ agentic:
   evidence_budget_bytes: 2400
   mode_env: ANCHOR_LLM_MODE
   policy_timeout_seconds: 20
+  max_hops: 4

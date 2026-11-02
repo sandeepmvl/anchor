@@ -193,3 +193,7 @@ class AgentDecision(BaseModel):
         elif self.tool is not None or self.arguments is not None or self.answer is None:
             raise ValueError('invalid_answer_decision')
         return self
+
+
+def normalize_retrieval_query(query: str) -> str:
+    return ' '.join(query.casefold().split())

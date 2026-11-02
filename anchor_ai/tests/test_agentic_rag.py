@@ -31,6 +31,17 @@ def search_decision(query='Cedar annual'):
     return {'kind': 'retrieve', 'tool': 'retrieve', 'arguments': {'query': query}}
 
 
+class SequencePolicy:
+    def __init__(self, queries):
+        self.queries = queries
+        self.calls = 0
+
+    async def decide(self, question, evidence):
+        query = self.queries[self.calls % len(self.queries)]
+        self.calls += 1
+        return search_decision(query)
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     monkeypatch.setenv('ANCHOR_LLM_MODE', 'offline')
@@ -87,9 +98,17 @@ def test_tool_wrapper_revalidates_arguments():
     ({'max_iterations': 1000, 'max_tool_calls': 1000}, 4, 'tool_budget'),
 ])
 def test_hard_budgets_terminate_repeated_calls(limits, expected_count, exit_reason):
-    backend = RecordedRetrievalBoundary()
+    # Repeated tool use must remain bounded even when every search makes progress.
+    data = copy.deepcopy(fixture_data())
+    queries = [f'productive budget search {i}' for i in range(6)]
+    for i, query in enumerate(queries):
+        chunk_id = 1001 + i
+        data['searches'][query] = [chunk_id]
+        data['passages'][str(chunk_id)] = {
+            'id': chunk_id, 'text': f'Recorded supporting passage {i}.'}
+    backend = RecordedRetrievalBoundary(data)
     events = []
-    policy = ConstantPolicy(search_decision())
+    policy = SequencePolicy(queries)
     result = run(AgenticRuntime(backend, policy, emit=events.append, **limits), 'ticket')
     assert len(backend.calls) == expected_count
     assert events[-1]['exit'] == exit_reason
@@ -125,8 +144,11 @@ def test_generation_cannot_change_between_calls():
                 result['generation_id'] = 'new-generation'
             return result
     events = []
-    runtime = AgenticRuntime(ChangingBoundary(), ConstantPolicy(search_decision()), emit=events.append)
+    backend = ChangingBoundary()
+    policy = SequencePolicy(['Cedar annual', 'R7 refund window'])
+    runtime = AgenticRuntime(backend, policy, emit=events.append)
     assert run(runtime, 'ticket')['abstained']
+    assert len(backend.calls) == 2
     assert events[-1]['exit'] == 'tool_error'
     assert events[-1]['evidence_chunk_ids'] == [101]
 
@@ -167,8 +189,10 @@ def test_evidence_cap_does_not_fabricate_coverage():
                              evidence_budget=1, emit=events.append)
     result = run(runtime, data['tickets']['compound-policy']['question'])
     assert result['abstained']
-    assert events[-1]['exit'] == 'tool_budget'
+    assert events[-1]['exit'] == 'duplicate_query'
     assert events[-1]['evidence_chunk_ids'] == []
+    assert events[-1]['tool_calls'] == 1
+    assert result['citations'] == []
 
 
 def test_trace_is_correlated_and_sanitized(monkeypatch):

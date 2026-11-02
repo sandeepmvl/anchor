@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 from anchor_ai.observability import AGENT_SUMMARIES, span
 from anchor_ai.prompts import AGENTIC_RAG_INSTRUCTION
 from anchor_ai.schemas import AgentDecision, RetrieveArguments
+from anchor_ai.schemas import normalize_retrieval_query
 
 FIXTURE = Path(__file__).parent / 'tests/fixtures/agentic_responses.json'
 ABSTENTION = 'I could not find a supporting policy in your documents.'
@@ -143,7 +145,7 @@ class RetrievalTool:
 class AgenticRuntime:
     def __init__(self, retriever, policy=None, emit=None, evidence_budget=None,
                  max_iterations=None, max_tool_calls=None, tenant_id=None,
-                 generation_id=None):
+                 generation_id=None, max_hops=None):
         config = settings()
         self.mode, selected = select_policy() if policy is None else ('injected', policy)
         self.policy = selected
@@ -151,6 +153,7 @@ class AgenticRuntime:
         self.evidence_budget = self._limit(evidence_budget, config['evidence_budget_bytes'], 1)
         self.max_iterations = self._limit(max_iterations, config['max_iterations'], 1)
         self.max_tool_calls = self._limit(max_tool_calls, config['max_tool_calls'], 0)
+        self.max_hops = self._limit(max_hops, config['max_hops'], 1)
         self.policy_timeout = config['policy_timeout_seconds']
         trusted_tenant = tenant_id if tenant_id is not None else getattr(retriever, 'tenant_id', None)
         self.tool = RetrievalTool(retriever, trusted_tenant, generation_id)
@@ -163,11 +166,19 @@ class AgenticRuntime:
             raise ValueError('invalid_agent_budget')
         return min(value, configured)
 
-    async def answer(self, question, k=3, *, request_id, trace_id):
+    async def answer(self, question, k=3, *, request_id, trace_id,
+                     conversation_seen_ids=()):
         if not isinstance(question, str) or not question.strip() or len(question.encode('utf-8')) > 1800:
             raise ValueError('current_question_budget_exceeded')
         if type(k) is not int or not 1 <= k <= 20:
             raise ValueError('invalid_top_k')
+        # Trusted caller history must belong to this tenant and pinned generation.
+        history = tuple(conversation_seen_ids)
+        if any(type(i) is not int or i <= 0 for i in history):
+            raise ValueError('invalid_conversation_seen_ids')
+        if history and self.tool.generation_id is None:
+            raise ValueError('agent_scope_mismatch')
+        seen_ids, seen_queries = set(history), set()
         evidence, calls = {}, 0
         self.last_trajectory = []
         ctx = {'request_id': request_id, 'trace_id': trace_id, 'parent_span_id': None}
@@ -176,17 +187,19 @@ class AgenticRuntime:
             def finish(reason, answer=None):
                 result = answer or {'reply': ABSTENTION, 'citations': [], 'abstained': True}
                 root.set(agent_exit=reason, tool_calls=calls,
-                         evidence_chunk_ids=sorted(evidence),
+                         evidence_chunk_ids=sorted(evidence), seen_chunk_ids=sorted(seen_ids),
                          citations=result['citations'], abstained=result['abstained'])
                 self.emit({'event': 'agent_exit', 'request_id': request_id,
                            'trace_id': trace_id, 'exit': reason, 'tool_calls': calls,
-                           'evidence_chunk_ids': sorted(evidence)})
+                           'evidence_chunk_ids': sorted(evidence),
+                           'seen_chunk_ids': sorted(seen_ids)})
                 return result
 
             for iteration in range(1, self.max_iterations + 1):
                 with span('python.agent.model', stage='llm', agent_iteration=iteration,
                           iterations_remaining=self.max_iterations - iteration,
-                          tool_calls_remaining=self.max_tool_calls - calls) as model_span:
+                          tool_calls_remaining=self.max_tool_calls - calls,
+                          hops_remaining=max(0, self.max_hops - calls)) as model_span:
                     try:
                         raw = await asyncio.wait_for(
                             self.policy.decide(question, list(evidence.values())),
@@ -216,16 +229,33 @@ class AgenticRuntime:
                     return finish(reason, answer)
                 if calls >= self.max_tool_calls:
                     return finish('tool_budget')
+                if calls >= self.max_hops:
+                    return finish('max_hops')
+                normalized = normalize_retrieval_query(decision.arguments.query)
+                fingerprint = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+                record['query_fingerprint'] = fingerprint
+                record['duplicate_query'] = normalized in seen_queries
+                root.set(query_fingerprint=fingerprint,
+                         duplicate_query=record['duplicate_query'])
+                if record['duplicate_query']:
+                    return finish('duplicate_query')
+                seen_queries.add(normalized)
                 calls += 1
                 with span('python.agent.tool', stage='tool', tool_name='retrieve',
-                          tool_calls=calls) as tool_span:
+                          query_fingerprint=fingerprint, tool_calls=calls) as tool_span:
                     try:
                         observation = await self.tool(decision.arguments.model_dump(), k)
                     except Exception:
                         tool_span.fail('agent_tool_failed')
                         return finish('tool_error')
+                    returned_ids = {p['id'] for p in observation['passages']}
+                    new_ids = returned_ids - seen_ids
+                    seen_ids.update(returned_ids)
+                    tool_span.set(new_chunk_ids=sorted(new_ids),
+                                  seen_chunk_ids=sorted(seen_ids))
                 record['tool_calls'] = calls
                 record['passage_ids'] = [p['id'] for p in observation['passages']]
+                record['new_chunk_ids'] = sorted(new_ids)
                 for passage in observation['passages']:
                     candidate = dict(evidence)
                     candidate[passage['id']] = passage
@@ -235,5 +265,9 @@ class AgenticRuntime:
                 self.emit({'event': 'agent_observation', 'request_id': request_id,
                            'trace_id': trace_id, 'tool': 'retrieve',
                            'iteration': iteration, 'passage_ids': record['passage_ids'],
+                           'query_fingerprint': fingerprint, 'new_chunk_ids': sorted(new_ids),
+                           'seen_chunk_ids': sorted(seen_ids),
                            'evidence_chunk_ids': sorted(evidence), 'tool_calls': calls})
+                if not new_ids:
+                    return finish('no_new_evidence')
             return finish('iteration_budget')
