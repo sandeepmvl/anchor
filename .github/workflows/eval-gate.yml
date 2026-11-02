@@ -36,7 +36,7 @@ jobs:
     env:
       ANCHOR_EVAL_DATABASE_URL: postgresql://anchor_eval:local-ci-only@localhost:5432/anchor_eval
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -56,7 +56,7 @@ jobs:
     runs-on: [self-hosted, anchor-integration]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -87,7 +87,7 @@ jobs:
       ANCHOR_REDTEAM_ADAPTER: ${{ vars.ANCHOR_REDTEAM_ADAPTER }}
       ANCHOR_REDTEAM_REVISION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -128,7 +128,7 @@ jobs:
       EVALUATORS_RESULT: ${{ needs.evaluators.result }}
       ACCUMULATED_RESULT: ${{ needs.accumulated.result }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
