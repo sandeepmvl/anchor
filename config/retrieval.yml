@@ -111,3 +111,10 @@ agentic:
   mode_env: ANCHOR_LLM_MODE
   policy_timeout_seconds: 20
   max_hops: 4
+
+release_endpoint:
+  url: http://127.0.0.1:8080/rag
+  health_path: /healthz
+  dataset: eval/datasets/rag_thresholds.json
+  search_mode: recorded
+  parity_command: python3 -m eval.eval_endpoint --testclient

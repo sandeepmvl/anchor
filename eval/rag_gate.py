@@ -160,6 +160,9 @@ def run_gate(output, dataset=None, client=None, degraded=False, release=None):
         decisions, error = enforce(persisted, captured, dataset, provenance)
         report.update(metrics=decisions, error=error, passed=error is None,
                       capture_hash=fingerprint(captured), score_hash=fingerprint(scores))
+        if release and report['passed']:
+            from eval.eval_endpoint import evaluate
+            report['endpoint'] = evaluate(output / 'endpoint', dataset, client, degraded)
         if release and (git('rev-parse', 'HEAD') != sha or git('status', '--porcelain')):
             report.update(passed=False, error='source_changed_during_evaluation')
         write_json(output / 'report.json', report)

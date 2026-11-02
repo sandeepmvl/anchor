@@ -1,5 +1,6 @@
 import hmac
 import os
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
@@ -19,7 +20,19 @@ except ImportError:
     from schemas import TriageLabels, InvalidModelOutput
     from observability import span, context
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(application):
+    from eval.eval_endpoint import ReleaseRuntime
+    factory = getattr(application.state, 'rag_release_runtime_factory', ReleaseRuntime)
+    application.state.rag_release_runtime = factory()
+    try:
+        yield
+    finally:
+        del application.state.rag_release_runtime
+
+
+app = FastAPI(lifespan=lifespan)
 router = APIRouter(prefix='/v1')
 
 
@@ -314,6 +327,49 @@ async def bounded_rag(
             raise ValueError('runtime_scope_mismatch')
         return await runtime.answer(body.message, body.top_k, mode=body.mode,
             request_id=item.record['request_id'], trace_id=item.record['trace_id'])
+    except TimeoutError:
+        item.fail('retrieval_deadline', 504)
+        raise HTTPException(status_code=504, detail='retrieval_deadline') from None
+    except ProviderError as error:
+        item.fail(error.code, error.status)
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
+    except ValueError:
+        item.fail('retrieval_failed', 422)
+        raise HTTPException(status_code=422, detail='retrieval_failed') from None
+
+
+from anchor_ai.schemas import ReleaseRagRequest, ReleaseRagResponse
+
+
+@app.get('/healthz')
+def healthz():
+    if not hasattr(app.state, 'rag_release_runtime'):
+        raise HTTPException(status_code=503, detail='retrieval_not_ready')
+    return {'ready': True}
+
+
+@app.post('/rag', response_model=ReleaseRagResponse)
+async def release_rag(
+    body: ReleaseRagRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    runtime = getattr(app.state, 'rag_release_runtime', None)
+    if runtime is None:
+        item.fail('retrieval_not_configured', 503)
+        raise HTTPException(status_code=503, detail='retrieval_not_configured')
+    item.set(stage='retrieval')
+    try:
+        return await runtime.answer(body)
     except TimeoutError:
         item.fail('retrieval_deadline', 504)
         raise HTTPException(status_code=504, detail='retrieval_deadline') from None

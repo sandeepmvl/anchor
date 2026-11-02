@@ -9,6 +9,7 @@ jobs:
       ANCHOR_LLM_PROVIDER: offline
       ANCHOR_QUERY_PROVIDER: offline
       ANCHOR_EMBEDDING_PROVIDER: offline
+      ANCHOR_EVAL_PROVIDER: offline
       RAILS_ENV: test
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +28,18 @@ jobs:
         run: python eval/retrieval_gate.py
       - name: Document-level dense versus hybrid benchmark
         run: python -m eval.retrieval_eval --details
+      - name: Fresh endpoint parity
+        run: python -m eval.eval_endpoint --testclient --output .git/anchor-endpoint-eval
+      - name: Golden answer and trajectory gate
+        run: python -m eval.rag_gate
+      - name: Endpoint evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: endpoint-evaluation
+          path: .git/anchor-endpoint-eval/
+          include-hidden-files: true
+          if-no-files-found: warn
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'

@@ -197,3 +197,28 @@ class AgentDecision(BaseModel):
 
 def normalize_retrieval_query(query: str) -> str:
     return ' '.join(query.casefold().split())
+
+
+from pydantic import JsonValue
+
+
+class ReleaseRagRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    ticket_id: str = Field(min_length=1, max_length=200)
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    generation_id: str = Field(min_length=1, max_length=200)
+    question: str = Field(min_length=1, max_length=1800)
+
+
+class ReleaseRagScope(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    generation_id: str = Field(min_length=1)
+
+
+class ReleaseRagResponse(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    scope: ReleaseRagScope
+    capture: dict[str, JsonValue]
