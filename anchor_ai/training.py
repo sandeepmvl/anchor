@@ -301,3 +301,50 @@ def distillation_manifest(rows, policy=None, balanced=False):
 def recorded_adapter_evaluation(candidate='adapter-recorded', manifest_path=None):
     from anchor_ai.adapters import MANIFEST, evaluate_release
     return evaluate_release(candidate, MANIFEST if manifest_path is None else manifest_path)
+
+
+def dpo_experiment(policy=None):
+    from anchor_ai.preferences import build_pairs, audit_pairs
+    policy = load_policy() if policy is None else policy
+    spec = policy['dpo']
+    beta = spec['beta']
+    if type(beta) not in (int, float) or not math.isfinite(beta) or beta <= 0:
+        raise ValueError('invalid_beta')
+    if (spec['reference']['frozen'] is not True
+            or spec['policy']['id'] == spec['reference']['id']
+            or spec['policy']['initial_checkpoint'] != spec['reference']['checkpoint']):
+        raise ValueError('invalid_reference_policy_identity')
+    pairs = build_pairs(read_jsonl(ROOT / spec['transcripts']), spec['tenant'])
+    splits = audit_pairs(pairs)
+    contract = {'policy': spec['policy'], 'reference': spec['reference'],
+                'beta': beta, 'loss_type': 'sigmoid',
+                'lineage': {s: digest(v) for s, v in splits.items()},
+                'tokenizer': spec['tokenizer'], 'settings': spec['settings']}
+    return {'candidate': spec['candidate'], 'experiment_id': digest(contract),
+            'contract': contract, 'lineage': contract['lineage'],
+            'heldout_ids': [r['id'] for r in splits['held_out']],
+            'counts': {s: len(v) for s, v in splits.items()},
+            'evidence_status': RECORDED, 'metrics_scope': 'offline_evidence_only',
+            'training_launched': False, 'checkpoint_created': False,
+            'training_release': False, 'deployment_approved': False,
+            'split_audit': 'family and exact checks; human near-duplicate review required'}
+
+
+def configure_dpo_trainer(policy_model, reference_model, tokenizer,
+                          train_dataset, eval_dataset, output_dir, beta=0.1):
+    # Optional GPU workflow entry point. Required offline commands never call it.
+    if policy_model is reference_model:
+        raise ValueError('separate_reference_model_required')
+    if type(beta) not in (int, float) or not math.isfinite(beta) or beta <= 0:
+        raise ValueError('invalid_beta')
+    from trl import DPOConfig, DPOTrainer
+    reference_model.eval()
+    for parameter in reference_model.parameters():
+        parameter.requires_grad_(False)
+    args = DPOConfig(output_dir=output_dir, beta=beta, loss_type='sigmoid',
+                     learning_rate=5e-7, per_device_train_batch_size=1,
+                     gradient_accumulation_steps=8, max_length=512,
+                     report_to='none')
+    return DPOTrainer(model=policy_model, ref_model=reference_model, args=args,
+                      processing_class=tokenizer, train_dataset=train_dataset,
+                      eval_dataset=eval_dataset)

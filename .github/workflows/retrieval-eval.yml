@@ -22,6 +22,12 @@ jobs:
         run: |
           python -m pip install -r anchor_ai/requirements.txt
           python -m pip install pytest httpx fastapi pydantic pyyaml rank-bm25 numpy scipy scikit-learn
+      # Preference alignment lesson 3688
+      - name: Preference data and offline alignment evidence
+        run: |
+          python bin/build_preference_dataset.py --source eval/finetune/fixtures/preference_transcripts.jsonl --tenant demo --out eval/finetune/preferences.jsonl
+          python bin/analyze_dpo.py --logs eval/finetune/fixtures/dpo_training_log.jsonl --replies eval/finetune/fixtures/dpo_heldout_replies.jsonl
+          python eval/model_gate.py --offline --candidate dpo-recorded
       - name: Accumulated AI unit and trajectory tests
         run: python -m pytest -q anchor_ai/tests
       - name: Versioned offline retrieval gate

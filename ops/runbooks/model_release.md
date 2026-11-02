@@ -24,3 +24,34 @@ Use independently held-out golden cases, the versioned LLM judge, safety checks,
 
 ## Troubleshooting
 A base-identity or hash error is a stop, not a warning. A wrong-alpha model can match its own merged output and still differ from the correct reference. A malformed state file fails closed. Do not delete state to conceal a failed promotion; investigate it and restore an approved selection through the release process.
+
+# Preference alignment lesson 3688
+
+## Preference-aligned candidates
+The DPO manifest distinguishes a trainable policy from its frozen reference.
+The proposed artifacts/merged-sft path is a configuration placeholder, not an
+artifact created by this lab. Before real training, bind both initial copies
+and the tokenizer to the reviewed merged export and immutable artifact hashes.
+Never update the reference during DPO. Inspect completion masks and truncation.
+
+Export only permitted, reviewed, tenant-scoped, redacted transcript comparisons.
+Group related conversations before splitting and review near duplicates.
+Email/phone pattern checks are a teaching minimum, not complete PII detection.
+Use the existing PII review and defer controls before storage, logs, or export.
+
+Run the recorded preference analyzer, independent resolved-ticket evaluation,
+and customization safety gate. A justified handoff is appropriate even when it
+is not a resolution. Never improve resolution numbers by inventing refunds.
+Block privacy leakage, injection compliance, unsupported claims, unsafe tool
+actions, and escalation regressions regardless of preference improvements.
+
+Rising margins with worse independent outcomes flag proxy over-optimization.
+Inspect generated replies, rejected-set coverage, and length-stratified scores.
+Compare earlier checkpoints, higher beta, and reviewed generic negatives.
+Changing beta changes raw margin scale; rerun independent evaluations.
+
+These constructed recordings cannot authorize deployment. Retain the golden
+and versioned LLM-judge gate, tenant-document and customer-message red-team
+cases, retrieval checks, trajectory tests, Rails CI, and production artifact,
+latency, and cost evidence. Do not promote dpo-recorded through the adapter
+release controller or set a live model override from this report.

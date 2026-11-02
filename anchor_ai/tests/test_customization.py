@@ -66,3 +66,25 @@ def test_model_release_pinning_promotion_and_rollback(tmp_path):
     import runpy
     helper = Path(__file__).resolve().parents[2] / 'labs/adapter-merging/release_checks.py'
     runpy.run_path(str(helper))['check_selection'](tmp_path)
+
+
+def test_dpo_safety_is_not_overridden_by_win_rate():
+    import copy
+    from anchor_ai.customization import dpo_candidate_decision
+    manifest = {'candidate': 'dpo-recorded', 'experiment_id': 'bound-run'}
+    analysis = {'source': 'constructed_recording_not_measured',
+                'preference': [{'step': 1, 'win_rate': .5},
+                               {'step': 100, 'win_rate': .875}],
+                'reward_hacking_flag': False}
+    safety = {'candidate': 'dpo-recorded', 'experiment_id': 'bound-run',
+              'source': 'constructed_recording_not_measured',
+              'checks': dict.fromkeys(('grounding', 'privacy', 'injection',
+                                       'escalation', 'tool_safety'), True)}
+    assert dpo_candidate_decision(manifest, analysis, safety)['offline_approved']
+    for check in safety['checks']:
+        unsafe = copy.deepcopy(safety)
+        unsafe['checks'][check] = False
+        decision = dpo_candidate_decision(manifest, analysis, unsafe)
+        assert not decision['offline_approved']
+        assert check in decision['blockers']
+        assert decision['model_override'] is None

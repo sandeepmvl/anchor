@@ -258,3 +258,11 @@ def audit_distillation(rows, spec):
         if any({r['labels'][task] for r in splits[s]} != set(labels) for s in splits):
             raise ValueError('missing_class_coverage')
     return splits
+
+
+# Preference alignment lesson 3688
+
+
+def audit_preferences(rows):
+    from anchor_ai.preferences import audit_pairs
+    return audit_pairs(rows)

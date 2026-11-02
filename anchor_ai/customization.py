@@ -164,3 +164,28 @@ def model_release_selection(state=None):
 def model_release_transition(candidate=None, rollback=False, state=None):
     from ops.deploy.model_release import STATE, transition
     return transition(candidate, rollback, STATE if state is None else state)
+
+
+# Preference alignment lesson 3688
+
+
+def dpo_candidate_decision(manifest, analysis, safety):
+    required = ('grounding', 'privacy', 'injection', 'escalation', 'tool_safety')
+    metrics = analysis.get('preference', [])
+    updated = [m for m in metrics if m.get('step', 0) > 0]
+    checks = {
+        'recorded_preference_improvement': (len(updated) >= 2
+            and updated[-1]['win_rate'] > updated[0]['win_rate']),
+        'independent_product_eval': analysis.get('reward_hacking_flag') is False,
+        'matching_candidate': safety.get('candidate') == manifest['candidate'],
+        'matching_experiment': safety.get('experiment_id') == manifest['experiment_id'],
+        'offline_source': (analysis.get('source') == 'constructed_recording_not_measured'
+            and safety.get('source') == 'constructed_recording_not_measured'),
+    }
+    for name in required:
+        checks[name] = safety.get('checks', {}).get(name) is True
+    blockers = [name for name, passed in checks.items() if not passed]
+    return {'candidate': manifest['candidate'], 'offline_approved': not blockers,
+            'blockers': blockers, 'scope': 'offline_recordings_only',
+            'active': False, 'model_override': None, 'refund_authorized': False,
+            'deployment_approved': False}

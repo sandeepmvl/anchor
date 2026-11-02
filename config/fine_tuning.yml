@@ -128,3 +128,29 @@ model_release:
   evidence_source: constructed_recording_not_measured
   live_deployment_enabled: false
   alternate_families: [dora, bottleneck, soft_prompt, ia3]
+
+# Preference alignment lesson 3688
+dpo:
+  candidate: dpo-recorded
+  tenant: demo
+  beta: 0.1
+  policy:
+    id: dpo-recorded-policy
+    initial_checkpoint: artifacts/merged-sft
+  reference:
+    id: merged-sft-reference
+    checkpoint: artifacts/merged-sft
+    frozen: true
+  tokenizer: matching reviewed merged export; not loaded offline
+  settings:
+    loss_type: sigmoid
+    learning_rate: 0.0000005
+    max_length: 512
+    micro_batch_size: 1
+    gradient_accumulation_steps: 8
+  transcripts: eval/finetune/fixtures/preference_transcripts.jsonl
+  logs: eval/finetune/fixtures/dpo_training_log.jsonl
+  replies: eval/finetune/fixtures/dpo_heldout_replies.jsonl
+  safety_cases: eval/datasets/customization_safety_cases.jsonl
+  evidence_source: constructed_recording_not_measured
+  training_release: false

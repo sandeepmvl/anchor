@@ -112,3 +112,21 @@ def test_activation_contract_requires_all_three_evidence_groups():
 def test_invalid_losses_are_rejected(value):
     with pytest.raises(ValueError, match='invalid_loss'):
         analyze_loss([{'epoch': 1, 'train_loss': value, 'val_loss': 1.0}])
+
+
+def test_dpo_manifest_has_frozen_reference_and_offline_lineage():
+    from anchor_ai.training import dpo_experiment
+    manifest = dpo_experiment()
+    contract = manifest['contract']
+    assert contract['policy']['id'] != contract['reference']['id']
+    assert contract['reference']['frozen'] is True
+    assert contract['policy']['initial_checkpoint'] == contract['reference']['checkpoint']
+    assert len(set(manifest['lineage'].values())) == 3
+    assert manifest['metrics_scope'] == 'offline_evidence_only'
+    assert manifest['evidence_status'] == 'constructed_recording_not_measured'
+    assert manifest['training_launched'] is False
+    assert manifest['checkpoint_created'] is False
+    policy = deepcopy(load_policy())
+    policy['dpo']['reference']['frozen'] = False
+    with pytest.raises(ValueError, match='invalid_reference'):
+        dpo_experiment(policy)

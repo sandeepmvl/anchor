@@ -8,7 +8,49 @@ from anchor_ai.customization import sft_activation_decision
 from anchor_ai.training import experiment, recorded_evaluation
 
 
+# Preference alignment lesson 3688
+def replay_dpo():
+    from anchor_ai.customization import load_policy, dpo_candidate_decision
+    from anchor_ai.dataset_quality import read_rows
+    from anchor_ai.preferences import ROOT, RECORDED, analyze
+    from anchor_ai.training import dpo_experiment, digest
+    policy = load_policy()
+    spec = policy['dpo']
+    manifest = dpo_experiment(policy)
+    logs = read_rows(ROOT / spec['logs'])
+    replies = read_rows(ROOT / spec['replies'])
+    if any(r['policy_id'] != spec['policy']['id']
+           or r['reference_id'] != spec['reference']['id']
+           or r['beta'] != spec['beta'] for r in logs):
+        raise ValueError('log_manifest_identity_mismatch')
+    report = analyze(logs, replies, manifest['heldout_ids'])
+    cases = read_rows(ROOT / spec['safety_cases'])
+    if (not cases or len({r['id'] for r in cases}) != len(cases)
+            or any(r['candidate'] != manifest['candidate']
+                   or r['source'] != RECORDED
+                   or type(r['passed']) is not bool for r in cases)):
+        raise ValueError('invalid_safety_recording')
+    required = ('grounding', 'privacy', 'injection', 'escalation', 'tool_safety')
+    checks = {}
+    for name in required:
+        group = [r for r in cases if r['check'] == name]
+        checks[name] = bool(group) and all(r['passed'] for r in group)
+    safety = {'candidate': manifest['candidate'],
+              'experiment_id': manifest['experiment_id'], 'source': RECORDED,
+              'checks': checks, 'case_digest': digest(cases)}
+    decision = dpo_candidate_decision(manifest, report, safety)
+    return {'manifest': manifest, 'evaluation': report, 'safety': safety,
+            'decision': decision, 'deployment_approved': False,
+            'required_existing_gates': ['golden_dataset_and_versioned_judge',
+                'tenant_document_and_customer_message_red_team',
+                'unit_tests', 'retrieval_regressions', 'agent_trajectories', 'Rails_CI'],
+            'retrieval_evidence': 'existing_gates_still_required_not_replaced',
+            'demo': 'Same refund ticket: choose justified human handoff over unauthorized confident resolution.'}
+
+
 def replay(candidate):
+    if candidate == 'dpo-recorded':
+        return replay_dpo()
     if candidate in ('adapter-recorded', 'default-recorded'):
         from anchor_ai.training import recorded_adapter_evaluation
         evidence = recorded_adapter_evaluation(candidate)
