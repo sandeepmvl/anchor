@@ -66,6 +66,14 @@ def test_quantized_artifact_requires_separate_evidence():
         'artifact_kind': 'quantized', 'artifact_hash': 'separately-evaluated-example', 'passed': True})
 
 
+def model_evidence(tmp_path, candidate, now=None):
+    from anchor_ai.adapters import MANIFEST
+    from ops.deploy.model_release import approved_entry
+    from eval.release_gate import manifest, offline_bundle, save
+    expected = manifest('model', approved_entry(candidate, MANIFEST))
+    return save(tmp_path / 'evaluation.json', offline_bundle(expected, now=now))
+
+
 def test_request_client_retains_release(tmp_path, monkeypatch):
     from anchor_ai.provider import configured_provider
     from ops.deploy.model_release import transition
@@ -73,10 +81,32 @@ def test_request_client_retains_release(tmp_path, monkeypatch):
     monkeypatch.setenv('ANCHOR_LLM_MODE', 'offline')
     monkeypatch.setenv('ANCHOR_MODEL_RELEASE_STATE', str(state))
     before = configured_provider()
-    transition('adapter-recorded', path=state)
+    transition('adapter-recorded', path=state,
+               evidence=model_evidence(tmp_path, 'adapter-recorded'))
     after = configured_provider()
     ticket = 'Please refund my order.'
     assert before.selection.complete(ticket) != after.selection.complete(ticket)
-    transition(rollback=True, path=state)
+    transition(rollback=True, path=state,
+               evidence=model_evidence(tmp_path, before.selection.candidate))
     assert after.selection.candidate == 'adapter-recorded'
     assert configured_provider().selection.complete(ticket) == before.selection.complete(ticket)
+
+
+def test_model_promotion_requires_complete_matching_evidence(tmp_path, monkeypatch):
+    from ops.deploy.model_release import transition
+    monkeypatch.delenv('ANCHOR_EVAL_EVIDENCE', raising=False)
+    state = tmp_path / 'selection.json'
+    with pytest.raises(ValueError, match='evaluation_evidence_required'):
+        transition('adapter-recorded', path=state)
+    assert not state.exists()
+    with pytest.raises(ValueError, match='evaluation_gate_failed'):
+        transition('adapter-recorded', path=state,
+                   evidence=model_evidence(tmp_path, 'adapter-recorded', now=0))
+    assert not state.exists()
+    evidence = model_evidence(tmp_path, 'adapter-recorded')
+    document = json.loads(evidence.read_text())
+    document['manifest']['prompt'] = 'another-prompt'
+    evidence.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match='evaluation_gate_failed'):
+        transition('adapter-recorded', path=state, evidence=evidence)
+    assert not state.exists()

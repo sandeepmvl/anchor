@@ -64,8 +64,31 @@ def test_recommendations_have_no_execution_side_effects():
 
 def test_model_release_pinning_promotion_and_rollback(tmp_path):
     import runpy
+    from eval.release_gate import manifest, offline_bundle, save
+    from ops.deploy import model_release
+
+    real_transition = model_release.transition
+
+    def transition_with_evidence(candidate=None, rollback=False,
+                                 path=model_release.STATE,
+                                 manifest_path=model_release.MANIFEST,
+                                 evidence=None):
+        # Supply fixtures only at the test boundary; retain the real release gate.
+        if evidence is None:
+            if rollback:
+                target = model_release.current_state(path, manifest_path)['previous']
+                assert target is not None
+            else:
+                target = model_release.approved_entry(candidate, manifest_path)
+            expected = manifest('model', target)
+            evidence = save(tmp_path / 'customization-evaluation.json',
+                            offline_bundle(expected))
+        return real_transition(candidate, rollback, path, manifest_path,
+                               evidence=evidence)
+
     helper = Path(__file__).resolve().parents[2] / 'labs/adapter-merging/release_checks.py'
-    runpy.run_path(str(helper))['check_selection'](tmp_path)
+    with patch.object(model_release, 'transition', side_effect=transition_with_evidence):
+        runpy.run_path(str(helper))['check_selection'](tmp_path)
 
 
 def test_dpo_safety_is_not_overridden_by_win_rate():

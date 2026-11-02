@@ -76,13 +76,33 @@ def initialized_store(path):
     return store
 
 
+def orchestration_evidence(tmp_path, target):
+    # Synthetic evidence tests the validator; this helper never authorizes deployment.
+    import copy
+    from eval.release_gate import manifest, offline_bundle, save
+    steps = 6 if target == 'prior' else 5
+    identity = manifest('orchestration', {'version': target,
+        'configuration': {'worker': 'refund', 'max_steps': steps}})
+    identity['commit'] = identity['commit'] if identity['commit'] != 'uncommitted' else 'test-commit'
+    bundle = offline_bundle(identity)
+    bundle['scope'] = 'production'
+    baseline = copy.deepcopy(bundle)
+    baseline['tier'] = 'full'
+    baseline['source'] = dict(branch='main', conclusion='success', run_id='123',
+                              workflow='.github/workflows/eval-gate.yml')
+    bundle['baseline'] = baseline
+    # The test repository normally has HEAD. Keep the failure explicit otherwise.
+    assert manifest()['commit'] != 'uncommitted', 'initialize the supplied Anchor repository with git before activation tests'
+    return save(tmp_path / 'orchestration-evidence.json', bundle)
+
+
 def test_atomic_configuration_rollback_requires_no_app_deployment(tmp_path):
     path = tmp_path / 'shared.sqlite3'
     store = initialized_store(path)
-    store.activate('prior', 'candidate', 'release-test')
+    store.activate('prior', 'candidate', 'release-test', evidence=orchestration_evidence(tmp_path, 'candidate'))
     stale_worker = OrchestrationStore(path)
     assert stale_worker.snapshot()['version'] == 'candidate'
-    store.activate('candidate', 'prior', 'incident-test')
+    store.activate('candidate', 'prior', 'incident-test', evidence=orchestration_evidence(tmp_path, 'prior'))
     assert stale_worker.snapshot()['version'] == 'prior'
     assert stale_worker.snapshot()['human_only'] is True
     with pytest.raises(ConfigurationConflict, match='active_version_changed'):
@@ -122,3 +142,15 @@ def test_smoke_does_not_make_production_gate_pass(monkeypatch):
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
     assert result.returncode != 0
     assert 'product_composition_adapter_missing' in result.stdout
+
+
+def test_orchestration_cannot_bypass_or_reuse_another_manifest(tmp_path, monkeypatch):
+    monkeypatch.delenv('ANCHOR_EVAL_EVIDENCE', raising=False)
+    store = initialized_store(tmp_path / 'gate.sqlite3')
+    with pytest.raises(ValueError, match='evaluation_evidence_required'):
+        store.activate('prior', 'candidate', 'test')
+    assert store.snapshot()['version'] == 'prior'
+    evidence = orchestration_evidence(tmp_path, 'prior')
+    with pytest.raises(ValueError, match='evaluation_gate_failed'):
+        store.activate('prior', 'candidate', 'test', evidence=evidence)
+    assert store.snapshot()['version'] == 'prior'

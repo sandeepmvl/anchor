@@ -2,6 +2,10 @@ import argparse
 import json
 import sqlite3
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from eval.release_gate import manifest as evaluation_manifest, require_evidence
 
 
 class ConfigurationConflict(ValueError):
@@ -56,13 +60,20 @@ class OrchestrationStore:
             raise ValueError('orchestration_not_initialized')
         return dict(version=row[0], human_only=bool(row[1]), configuration=json.loads(row[2]))
 
-    def activate(self, expected, target, operator):
+    def activate(self, expected, target, operator, evidence=None):
         if not operator:
             raise ValueError('operator_required')
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if db.execute('SELECT 1 FROM versions WHERE version=?', (target,)).fetchone() is None:
+            row = db.execute('SELECT configuration FROM versions WHERE version=?', (target,)).fetchone()
+            if row is None:
                 raise ValueError('unknown_version')
+            active = db.execute('SELECT version FROM active WHERE singleton=1').fetchone()
+            if active is None or active[0] != expected:
+                raise ConfigurationConflict('active_version_changed')
+            identity = evaluation_manifest('orchestration',
+                {'version': target, 'configuration': json.loads(row[0])})
+            require_evidence(identity, evidence)
             changed = db.execute('UPDATE active SET version=? WHERE singleton=1 AND version=?',
                                  (target, expected)).rowcount
             if changed != 1:
@@ -121,6 +132,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--database', required=True)
     parser.add_argument('--operator', required=True)
+    parser.add_argument('--evidence', type=Path)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('stop')
     rollback = commands.add_parser('rollback')
@@ -135,7 +147,7 @@ def main():
     else:
         if not store.snapshot()['human_only']:
             parser.error('activate human-only mode before rollback')
-        store.activate(args.expected, args.target, args.operator)
+        store.activate(args.expected, args.target, args.operator, evidence=args.evidence)
     print(json.dumps(store.snapshot(), sort_keys=True))
 
 

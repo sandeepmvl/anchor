@@ -6,7 +6,8 @@ Run `python3 -m eval.eval_endpoint --testclient` from the repository root.
 Inspect `.git/anchor-endpoint-eval/{local,endpoint}-capture.json` and both score files.
 Run `sh ops/deploy/rag_release.sh --verify-only` before publication.
 The wrapper requires fresh endpoint parity, the existing golden gate and accumulated AI tests.
-A nonzero status blocks publication. Never add `|| true` to these checks.
+A nonzero status blocks publication. A passing verify-only run does not authorize deployment.
+Never add `|| true` to these checks.
 
 ## Boundary and scope
 
@@ -56,3 +57,11 @@ An auto-start timeout followed by successful startup differs from repeated faile
 Check lifespan completion, health grace, memory exits and 0.0.0.0:8080 binding.
 Missing artifacts, secrets and unreachable index hosts are deployment failures.
 Use bounded caller timeouts; do not retry a failing service indefinitely.
+
+## Consolidated production approval
+Set ANCHOR_EVAL_EVIDENCE to the trusted production bundle fetched for the exact reviewed release.
+The --deploy path additionally validates all four evaluation reports, upstream success, fresh evidence,
+matching release manifest and a successful full main baseline before invoking Fly.
+Offline fixtures never satisfy this check. Bind index configuration to immutable index artifact digests.
+Prompt, model and index updates require reevaluation even when app code does not change.
+See evaluation_gate.md for provenance, bootstrap, required-check provisioning and audited exceptions.

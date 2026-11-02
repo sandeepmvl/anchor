@@ -4,19 +4,30 @@ require "rbconfig"
 root = File.expand_path("..", __dir__)
 Dir.chdir(root)
 python = ENV.fetch("ANCHOR_PYTHON", "python3")
+
+if ENV["ANCHOR_RELEASE_CONTRACT_ONLY"] == "1"
+  warn "release_gate: BLOCKED — contract-inspection mode cannot release"
+  exit 1
+end
+
+if ARGV == ["--smoke"]
+  puts "OFFLINE ONLY: accumulated production composition, service DB and sandbox isolation not verified"
+  tests = [python, "-m", "pytest", "-q", "anchor_ai/tests/test_eval_release_gate.py",
+           "anchor_ai/tests/test_eval_dashboard.py"]
+  exit 1 unless system(*tests)
+  exit(system(python, "-m", "eval.release_gate", "smoke") ? 0 : 1)
+end
+abort "usage: bin/release_gate [--smoke]" unless ARGV.empty?
+
 commands = [
   [RbConfig.ruby, "bin/rails", "test"],
   [python, "-m", "pytest", "-q", "anchor_ai/tests"],
   [python, "eval/retrieval_gate.py"],
   [python, "eval/rag_gate.py"],
   [python, "eval/agent_gate.py"],
-  [python, "eval/multi_agent_gate.py"]
+  [python, "eval/multi_agent_gate.py"],
+  [python, "-m", "eval.release_gate", "decide"]
 ]
-
-if ENV["ANCHOR_RELEASE_CONTRACT_ONLY"] == "1"
-  warn "release_gate: BLOCKED — contract-inspection mode cannot release"
-  exit 1
-end
 
 commands.each do |command|
   puts "release_gate: running #{command.join(' ')}"
@@ -26,4 +37,4 @@ commands.each do |command|
   end
 end
 
-puts "release_gate: PASS — accumulated product gates passed"
+puts "release_gate: PASS — accumulated product gates and consolidated evaluation passed"

@@ -16,4 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Accumulated product gates
-        run: ruby bin/release_gate
+        run: |
+          bin/rails test
+          python3 -m pytest -q anchor_ai/tests
+          python3 eval/retrieval_gate.py
+          python3 eval/rag_gate.py
+          python3 eval/agent_gate.py
+          python3 eval/multi_agent_gate.py
+      - name: Consolidated release ownership
+        run: echo 'Anchor release gate in eval-gate.yml owns manifest comparison and required merge status'

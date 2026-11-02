@@ -14,8 +14,10 @@ python3 -m eval.eval_endpoint --testclient
 python3 -m eval.rag_gate
 python3 -m pytest -q anchor_ai/tests
 if [ "$mode" = '--verify-only' ]; then
-  echo 'PASS: endpoint parity, golden evaluation and existing tests; deployment stage permitted'
+  echo 'PASS: offline endpoint parity, golden evaluation and tests; production deployment NOT approved'
   exit 0
 fi
+: "${ANCHOR_EVAL_EVIDENCE:?Set the trusted production evaluation bundle path}"
+python3 -c 'from eval.release_gate import manifest, require_evidence; require_evidence(manifest())'
 : "${FLY_APP:?Set FLY_APP to the reviewed Fly application}"
 fly deploy --app "$FLY_APP" --config ops/deploy/fly.rag.toml

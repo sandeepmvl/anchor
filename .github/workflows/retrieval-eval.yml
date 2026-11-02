@@ -41,8 +41,9 @@ jobs:
         run: |
           python labs/adapter-merging/merge_adapter.py --fixture eval/finetune/fixtures/qlora-adapter
           python eval/model_gate.py --offline --candidate adapter-recorded
-          python ops/deploy/model_release.py --offline --promote adapter-recorded
-          python ops/deploy/model_release.py --offline --rollback
+          python -m pytest -q anchor_ai/tests/test_adapter_release.py
+          # Promotion now requires separately supplied complete consolidated evidence.
+          # The lifecycle test exercises promotion and rollback with bound offline evidence.
       - name: Document-level dense versus hybrid benchmark
         run: python -m eval.retrieval_eval --details
       - name: Fresh endpoint parity

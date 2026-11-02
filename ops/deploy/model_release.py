@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from anchor_ai.adapters import MANIFEST, ROOT, artifact_contract, digest, evaluate_release
+from eval.release_gate import manifest as evaluation_manifest, require_evidence
 
 STATE = ROOT / '.git/anchor-model-release.json'
 
@@ -65,7 +66,7 @@ def current_state(path=STATE, manifest_path=MANIFEST):
             'current': approved_entry(manifest['default'], manifest_path), 'previous': None}
 
 
-def transition(candidate=None, rollback=False, path=STATE, manifest_path=MANIFEST):
+def transition(candidate=None, rollback=False, path=STATE, manifest_path=MANIFEST, evidence=None):
     if rollback == (candidate is not None):
         raise ValueError('choose_promote_or_rollback')
     with selection_lock(path):
@@ -82,6 +83,8 @@ def transition(candidate=None, rollback=False, path=STATE, manifest_path=MANIFES
                 raise ValueError('rollback_release_identity_changed')
         else:
             target = approved_entry(candidate, manifest_path)
+        expected = evaluation_manifest('model', target)
+        require_evidence(expected, evidence, offline=True)
         if target == old:
             return state
         result = dict(state, generation=state['generation'] + 1,
@@ -126,9 +129,10 @@ def main():
     group.add_argument('--promote')
     group.add_argument('--rollback', action='store_true')
     parser.add_argument('--state', type=Path, default=STATE)
+    parser.add_argument('--evidence', type=Path)
     args = parser.parse_args()
     before = pin_release(args.state)
-    state = transition(args.promote, args.rollback, args.state)
+    state = transition(args.promote, args.rollback, args.state, evidence=args.evidence)
     after = pin_release(args.state)
     ticket = before.ticket
     print(json.dumps({'scope': 'offline', 'same_ticket': ticket,

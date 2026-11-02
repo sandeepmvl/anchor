@@ -55,3 +55,11 @@ and versioned LLM-judge gate, tenant-document and customer-message red-team
 cases, retrieval checks, trajectory tests, Rails CI, and production artifact,
 latency, and cost evidence. Do not promote dpo-recorded through the adapter
 release controller or set a live model override from this report.
+
+## Consolidated evidence milestone
+Promotion and rollback now additionally require --evidence PATH or ANCHOR_EVAL_EVIDENCE.
+The expected evaluation manifest includes the complete approved_entry target, binding the candidate,
+model manifest hash and artifact hashes as well as commit, dataset, rubric, prompt, model and index.
+All four reports must be complete, fresh and matching. Offline evidence permits only this controller's
+offline selection exercise, never deployment. Missing or stale evidence leaves selection unchanged.
+See evaluation_gate.md for trusted production provenance, baseline, ruleset and exception policy.

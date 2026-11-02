@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "max_age_seconds": 86400,
+  "baseline_max_age_seconds": 1209600,
+  "tolerance": 0.05,
+  "floors": {
+    "golden": 1.0,
+    "calibration": 0.75,
+    "trajectory": 0.95,
+    "regression": 1.0
+  },
+  "inputs": {
+    "dataset": "eval/datasets/golden_v1.jsonl",
+    "rubric": "eval/judge_rubric.yml",
+    "prompt": "anchor_ai/prompts.py",
+    "model": "config/model_releases.yml",
+    "index": "config/retrieval.yml"
+  },
+  "quarantine": {},
+  "required_upstream": ["candidate", "golden", "calibration", "trajectory", "regression", "accumulated"]
+}
