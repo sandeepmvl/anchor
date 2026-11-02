@@ -1,3 +1,40 @@
+from contextlib import asynccontextmanager
+
+
+class RoutedLlmClient:
+    """Trusted composition; customers cannot supply verify or client_for."""
+    def __init__(self, router, *, verify, token, client_for, feature='chat'):
+        self.router, self.verify, self.token = router, verify, token
+        self.authority_for, self.feature = client_for, feature
+
+    @asynccontextmanager
+    async def scoped_client(self):
+        from anchor_ai.runtime import verified_routing_scope
+        with verified_routing_scope(self.router, verify=self.verify, token=self.token,
+                client_for=self.authority_for, feature=self.feature) as identity:
+            router = self.router
+            class BoundProvider:
+                vision_offline = True
+                key = router.key
+                client = staticmethod(router.client_for(identity.tenant_id))
+            yield identity, LlmClient(BoundProvider())
+
+    async def complete_result(self, prompt, system=None, max_tokens=256):
+        async with self.scoped_client() as (_, client):
+            return await client.complete_result(prompt, system, max_tokens)
+
+    def complete(self, prompt, system=None, max_tokens=256):
+        return asyncio.run(self.complete_result(prompt, system, max_tokens)).reply
+
+    async def stream_tokens(self, prompt, **kwargs):
+        raise ProviderError('routing_stream_unsupported', status=503)
+        yield
+
+    async def probe(self, name):
+        async with self.scoped_client() as (identity, _):
+            return await self.router.probe(name, identity.tenant_id)
+
+
 def transcribe_audio(raw, *, client=None, production=False, policy='silence'):
     """Speech uses an explicit adapter, never the chat provider's live setting."""
     from anchor_ai.audio import transcribe

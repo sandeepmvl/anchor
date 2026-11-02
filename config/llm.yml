@@ -6,3 +6,6 @@ shared:
   read_timeout: <%= ENV.fetch("ANCHOR_AI_READ_TIMEOUT", "5").inspect %>
   default_prompt_version: <%= ENV.fetch("ANCHOR_CHAT_PROMPT_VERSION", "chat:v1").inspect %>
   provider_prefix_layout_version: triage-prefix:v1
+  # Explicit AI-service composition only; this does not reroute existing Rails callers.
+  provider_routing_policy: config/provider_routing.yml
+  provider_routing_enabled: false

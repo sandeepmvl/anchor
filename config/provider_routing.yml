@@ -1,0 +1,36 @@
+fixture: true
+logical_model: support-answer
+threshold: 2
+cooldown_seconds: 30
+attempt_timeout_seconds: 0.1
+total_timeout_seconds: 1
+max_attempts: 2
+bound: 100
+order: [primary, secondary]
+deployments:
+  primary:
+    model: gpt-4o-mini
+    region: eu
+    capabilities: [chat]
+    context_bytes: 16000
+    evaluated: true
+  secondary:
+    model: gpt-4o-mini
+    region: eu
+    capabilities: [chat]
+    context_bytes: 16000
+    evaluated: true
+tenants:
+  1:
+    approved: [primary, secondary]
+    regions: [eu]
+  2:
+    approved: [primary]
+    regions: [eu]
+  3:
+    approved: [primary, secondary]
+    regions: [us]
+# Synthetic prices below are configured in the drill, not provider prices.
+# Missing policy never grants permission.
+# Ordinary requests never act as recovery probes.
+# Production remains disabled even if this fixture flag is edited.

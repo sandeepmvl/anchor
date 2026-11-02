@@ -1,3 +1,205 @@
+# Buffered routing is opt-in; existing provider selection below is unchanged.
+def routing_configuration(path='config/provider_routing.yml'):
+    import yaml
+    c = yaml.safe_load(Path(path).read_text())
+    for key in ('threshold', 'max_attempts', 'bound'):
+        if type(c.get(key)) is not int or c[key] <= 0:
+            raise ValueError('invalid_routing_configuration')
+    for key in ('cooldown_seconds', 'attempt_timeout_seconds', 'total_timeout_seconds'):
+        value = c.get(key)
+        if type(value) not in (int, float) or not 0 < value < float('inf'):
+            raise ValueError('invalid_routing_configuration')
+    order = c['order']
+    if not order or len(order) != len(set(order)):
+        raise ValueError('invalid_routing_order')
+    from anchor_ai.observability import safe_id
+    for name in order:
+        d = c['deployments'][name]
+        if (safe_id(name) is None or not d.get('model') or not d.get('region')
+                or type(d.get('context_bytes')) is not int or d['context_bytes'] <= 0
+                or not isinstance(d.get('capabilities'), list)
+                or type(d.get('evaluated')) is not bool):
+            raise ValueError('invalid_routing_deployment')
+    return c
+
+
+AVAILABILITY = frozenset({'provider_timeout', 'provider_transport_error',
+                          'provider_unavailable', 'provider_rate_limited'})
+
+
+class OfflineDeployment:
+    """Single-send deterministic adapter; never opens a network connection."""
+    fixture = True
+
+    def __init__(self):
+        self.scenario, self.requests, self.cancelled = 'ok', [], False
+
+    async def send(self, request, payload):
+        self.requests.append(payload)
+        if self.scenario == 'timeout':
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+        if self.scenario == 'connection':
+            raise httpx.ConnectError('offline transport failure', request=request)
+        status = {'outage': 503, 'bad': 400, 'auth': 401, 'forbidden': 403,
+                  'quota': 429, 'unknown429': 429, 'rate': 429}.get(self.scenario, 200)
+        if status != 200:
+            code = {'quota': 'insufficient_quota', 'rate': 'rate_limit_exceeded'}.get(
+                self.scenario, 'fixture_error')
+            return httpx.Response(status, json={'error': {'code': code}}, request=request)
+        return httpx.Response(200, request=request, json={
+            'model': payload['model'],
+            'choices': [{'message': {'content': 'I can help check the return policy for R-42.'},
+                         'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 5, 'total_tokens': 10}})
+
+
+class RoutingProvider:
+    """One outer HTTP operation; no deployment is revisited within it."""
+    vision_offline = True
+
+    def __init__(self, adapters, collector, *, config=None, clock=None, production=False):
+        import time
+        if production:
+            raise ValueError('routing_release_evidence_missing')
+        self.config = config or routing_configuration()
+        self.adapters, self.collector, self.clock = adapters, collector, clock or time.monotonic
+        self.health = {n: {'failures': 0, 'degraded': False, 'next_probe': 0}
+                       for n in self.config['order']}
+        self.probe_locks = {n: asyncio.Lock() for n in self.config['order']}
+        self.served_by, self.events = None, []
+
+    def key(self):
+        return 'offline-routing-boundary'
+
+    def event(self, name, reason, attempt_id=None):
+        from anchor_ai.observability import emit_provider_routing
+        h = self.health[name]
+        record = dict(provider=name, classification=reason, failures=h['failures'],
+                      degraded=h['degraded'], next_probe=h['next_probe'], attempt_id=attempt_id)
+        self.events.append(record)
+        emit_provider_routing(record)
+
+    def eligible(self, name, tenant_id, payload):
+        policy = self.config['tenants'].get(tenant_id, {})
+        d = self.config['deployments'][name]
+        return (name in policy.get('approved', []) and d['region'] in policy.get('regions', [])
+                and d['evaluated'] is True and 'chat' in d['capabilities']
+                and len(json.dumps(payload).encode()) <= d['context_bytes'])
+
+    def failure(self, name):
+        h = self.health[name]
+        h['failures'] += 1
+        if h['failures'] >= self.config['threshold']:
+            h['degraded'] = True
+            h['next_probe'] = self.clock() + self.config['cooldown_seconds']
+        self.event(name, 'availability_failure')
+
+    def success(self, name):
+        self.health[name].update(failures=0, degraded=False, next_probe=0)
+
+    async def physical(self, name, request, payload):
+        from anchor_ai.quota_client import reserve_routing_attempt
+        from anchor_ai.cost_accounting import routing_attempt, settle_quota_usage
+        authority, reservation = reserve_routing_attempt()
+        attempt = routing_attempt(self.collector, provider=name,
+                                  model=self.config['deployments'][name]['model'],
+                                  reservation=reservation)
+        mapped = dict(payload, model=attempt['model'])
+        self.event(name, 'dispatch', attempt['attempt_id'])
+        settled = False
+        try:
+            async with asyncio.timeout(self.config['attempt_timeout_seconds']):
+                response = await self.adapters[name].send(request, mapped)
+            if response.status_code == 200:
+                event = settle_quota_usage(authority, reservation, attempt,
+                    response.json().get('usage'), self.collector.config)
+                self.collector.events.append(event)
+                settled = True
+            return response
+        except (TimeoutError, httpx.TimeoutException):
+            raise ProviderError('provider_timeout') from None
+        except httpx.TransportError:
+            raise ProviderError('provider_transport_error') from None
+        finally:
+            if not settled:
+                self.collector.unresolved.append(attempt['attempt_id'])
+
+    async def route(self, request, tenant_id):
+        payload = json.loads(request.content)
+        if payload.get('stream'):
+            raise ProviderError('routing_stream_unsupported', status=503)
+        if payload.get('tools') or payload.get('tool_choice'):
+            raise ProviderError('routing_tool_unsupported', status=503)
+        visited = set()
+        async with asyncio.timeout(self.config['total_timeout_seconds']):
+            for name in self.config['order']:
+                if len(visited) >= self.config['max_attempts']:
+                    break
+                if name in visited or not self.eligible(name, tenant_id, payload):
+                    continue
+                if self.health[name]['degraded']:
+                    self.event(name, 'cooldown_skip')
+                    continue
+                visited.add(name)
+                try:
+                    response = await self.physical(name, request, payload)
+                    if response.status_code != 200:
+                        error = classify(response)
+                        if error.code not in AVAILABILITY:
+                            self.event(name, 'non_availability_error')
+                            return response
+                        raise error
+                except ProviderError as error:
+                    if error.code not in AVAILABILITY:
+                        raise
+                    self.failure(name)
+                    continue
+                self.success(name)
+                self.served_by = name
+                self.event(name, 'success')
+                return response
+        raise ProviderError('routing_unavailable', status=503)
+
+    def client_for(self, tenant_id):
+        from contextlib import asynccontextmanager
+        @asynccontextmanager
+        async def opened():
+            async def dispatch(request):
+                try:
+                    return await self.route(request, tenant_id)
+                except TimeoutError:
+                    raise ProviderError('routing_deadline', status=503) from None
+            async with httpx.AsyncClient(transport=httpx.MockTransport(dispatch), trust_env=False) as client:
+                yield client
+        return opened
+
+    async def probe(self, name, tenant_id):
+        async with self.probe_locks[name]:
+            h = self.health[name]
+            if not h['degraded'] or self.clock() < h['next_probe']:
+                return False
+            payload = {'model': self.config['logical_model'],
+                       'messages': [{'role': 'user', 'content': 'Synthetic recovery probe'}],
+                       'max_tokens': 16}
+            if not self.eligible(name, tenant_id, payload):
+                return False
+            request = httpx.Request('POST', 'https://offline.invalid/probe', json=payload)
+            try:
+                response = await self.physical(name, request, payload)
+                if response.status_code != 200:
+                    raise classify(response)
+            except ProviderError:
+                h['next_probe'] = self.clock() + self.config['cooldown_seconds']
+                self.event(name, 'probe_failed')
+                return False
+            self.success(name)
+            self.event(name, 'probe_success')
+            return True
+
+
 NATIVE_CAPABILITIES = frozenset({'responses', 'function_tools', 'stored_history'})
 
 

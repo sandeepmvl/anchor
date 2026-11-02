@@ -1,3 +1,15 @@
+def routing_attempt(collector, *, provider, model, reservation):
+    """Attribute a physical send without resetting its verified logical scope."""
+    if model not in collector.config['models']:
+        raise ValueError('unconfigured_routing_model')
+    if not isinstance(provider, str) or not provider:
+        raise ValueError('unconfigured_routing_provider')
+    attempt = collector.attempt()
+    attempt.update(model=model, provider=provider,
+                   reservation_id=reservation['reservation_id'])
+    return attempt
+
+
 """Attempt accounting adapter; never store prompts, replies, or HTTP bodies."""
 import contextvars
 import copy

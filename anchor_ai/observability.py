@@ -1,3 +1,22 @@
+def emit_provider_routing(record):
+    """Validate content-free deployment decisions and inherit the caller trace."""
+    if (set(record) != {'provider', 'classification', 'failures', 'degraded',
+                       'next_probe', 'attempt_id'}
+            or safe_id(record['provider']) is None
+            or record['classification'] not in {'dispatch', 'availability_failure',
+                'non_availability_error', 'cooldown_skip', 'success',
+                'probe_failed', 'probe_success'}
+            or type(record['failures']) is not int or record['failures'] < 0
+            or type(record['degraded']) is not bool
+            or type(record['next_probe']) not in (int, float)
+            or not math.isfinite(record['next_probe']) or record['next_probe'] < 0
+            or (record['attempt_id'] is not None and safe_id(record['attempt_id']) is None)):
+        raise ValueError('unsafe_routing_telemetry')
+    with span('anchor.routing', stage='provider',
+              provider_request_id=record['attempt_id'], attempts=record['failures']) as item:
+        item.record['routing'] = dict(record)
+
+
 import contextvars
 import json
 import logging
@@ -656,8 +675,6 @@ def choose_tenant_policy(interval_seconds, requests, policies):
     for name in ('default', 'extended'):
         item = policies[name]
         ttl = item['ttl_seconds']
-        if type(ttl) is not int or ttl <= 0:
-            raise ValueError('invalid_prefix_ttl')
         reads, writes = (requests - 1, 1) if interval_seconds < ttl else (0, requests)
         p = rates(item['prices'])
         net = reads * (p['base'] - p['read']) - writes * (p['write'] - p['base'])

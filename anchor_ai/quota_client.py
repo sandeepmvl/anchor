@@ -1,3 +1,8 @@
+def reserve_routing_attempt():
+    """Each deployment send and recovery probe needs fresh authority admission."""
+    return reserve_attempt()
+
+
 """Admission interface. No implicit network, local allowance, or fail-open mode."""
 import contextvars
 import json

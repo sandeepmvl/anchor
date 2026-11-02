@@ -1,3 +1,23 @@
+from contextlib import contextmanager
+
+
+@contextmanager
+def verified_routing_scope(router, *, verify, token, client_for, feature):
+    """Verify once, then bind accounting and admission to the same identity."""
+    if not token:
+        raise ContextError('missing_execution_context')
+    identity = verify(token)
+    if (identity is None or type(identity.tenant_id) is not int
+            or identity.tenant_id <= 0 or not identity.role):
+        raise ContextError('unverified_execution_context')
+    model = router.config['deployments'][router.config['order'][0]]['model']
+    from anchor_ai.quota_client import quota_scope
+    with router.collector.scope(tenant_id=identity.tenant_id, feature=feature,
+                                role='base_completion', model=model):
+        with quota_scope(client_for(identity, feature), bound=router.config['bound']):
+            yield identity
+
+
 async def run_diagnostic_ticket(runtime, token, service, *, confirmed=False, dry_run=True):
     """Dedicated read-only diagnostic path; never a financial-tool dispatcher."""
     from anchor_ai.tools import register_sandbox
