@@ -5,3 +5,4 @@ shared:
   # Python's four-second total deadline must remain below this read timeout.
   read_timeout: <%= ENV.fetch("ANCHOR_AI_READ_TIMEOUT", "5").inspect %>
   default_prompt_version: <%= ENV.fetch("ANCHOR_CHAT_PROMPT_VERSION", "chat:v1").inspect %>
+  provider_prefix_layout_version: triage-prefix:v1

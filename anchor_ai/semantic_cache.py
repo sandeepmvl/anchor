@@ -163,3 +163,17 @@ class SemanticCache:
         while len(self.rows) > self.config['max_entries']:
             del self.rows[0]
         return True
+
+
+async def with_answer_cache(cache, snapshot, query, vector, generate):
+    """Generate returns (Generated, provider_report); eligibility stays explicit."""
+    answer = cache.lookup(snapshot, query, vector)
+    if answer is not None:
+        return answer, dict(answer_cache_hit=True, provider_called=False,
+                            provider_cache_status='not_called',
+                            cached_input_tokens=None, cache_write_tokens=None,
+                            estimated_input_saving_usd=None,
+                            evidence='anchor_answer_cache')
+    generated, evidence = await generate()
+    cache.store(snapshot, query, vector, generated)
+    return generated.text, evidence

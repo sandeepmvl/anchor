@@ -16,3 +16,14 @@ semantic_cache:
   replay_scope: in_process_offline
   record_content: false
   evidence: policy_not_embedding_quality
+
+provider_prompt_cache:
+  record_content: false
+  price_basis: illustrative
+  policies:
+    default:
+      ttl_seconds: 300
+      prices: {base: '1.00', read: '0.10', write: '1.25'}
+    extended:
+      ttl_seconds: 3600
+      prices: {base: '1.00', read: '0.10', write: '2.00'}

@@ -425,3 +425,67 @@ class ModelReleaseReplayProvider(ReplayProvider):
             'model': selection.candidate,
             'choices': [{'message': {'content': selection.reply}, 'finish_reason': 'stop'}],
             'usage': {'prompt_tokens': 5, 'completion_tokens': 15, 'total_tokens': 20}}}]
+
+
+class UsageTap:
+    """Observe raw usage without changing the existing client's response."""
+    def __init__(self, provider):
+        self.provider = provider
+        self.raw_usage = None
+        self.vision_offline = getattr(provider, 'prefix_offline', False)
+
+    def key(self):
+        return self.provider.key()
+
+    def client(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def opened():
+            async def observe(response):
+                if response.status_code == 200:
+                    await response.aread()
+                    self.raw_usage = response.json().get('usage')
+            async with self.provider.client() as client:
+                client.event_hooks['response'].append(observe)
+                yield client
+        return opened()
+
+
+class SyntheticPrefixProvider:
+    """HTTP fake; token units and first-text events are synthetic."""
+    prefix_offline = True
+
+    def __init__(self, *, ttl_seconds, clock, first_text=None):
+        self.ttl_seconds, self.clock = ttl_seconds, clock
+        self.first_text = first_text or (lambda: None)
+        self.entries, self.requests = {}, []
+
+    def key(self):
+        return 'offline-prefix-key'
+
+    def send(self, request):
+        from anchor_ai.prompts import digest, canonical
+        payload = json.loads(request.content)
+        self.requests.append(payload)
+        prefix = payload['messages'][0]['content']
+        key = digest(canonical({'model': payload['model'], 'prefix': prefix,
+                                'temperature': payload.get('temperature')}))
+        hit = self.entries.get(key, -1) > self.clock()
+        units = max(1, len(prefix.encode('utf-8')) // 4)
+        tail = max(1, len(payload['messages'][-1]['content'].encode('utf-8')) // 4)
+        self.clock.advance(.001 if hit else .006)
+        self.first_text()
+        self.entries[key] = self.clock() + self.ttl_seconds
+        total = units + tail
+        # Explicit synthetic extension; not a universal OpenAI Chat field.
+        usage = dict(prompt_tokens=total, completion_tokens=12, total_tokens=total + 12,
+                     prompt_tokens_details=dict(cached_tokens=units if hit else 0,
+                                               cache_write_tokens=0 if hit else units))
+        return httpx.Response(200, json={
+            'model': payload['model'], 'usage': usage,
+            'choices': [{'message': {'content': '{"category":"billing","urgency":"P3"}'},
+                         'finish_reason': 'stop'}]})
+
+    def client(self):
+        return httpx.AsyncClient(transport=httpx.MockTransport(self.send), trust_env=False)

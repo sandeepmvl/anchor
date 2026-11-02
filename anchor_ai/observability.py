@@ -573,3 +573,138 @@ def emit_semantic_cache(record):
         raise ValueError('unsafe_cache_telemetry')
     with span('python.semantic_cache', stage='cache') as item:
         item.set(**record)
+
+
+def integer(value):
+    if type(value) is not int or value < 0:
+        raise ValueError('invalid_cache_usage')
+    return value
+
+
+def normalize_usage(raw, style):
+    """Unknown counters stay None; ordinary input never implies a hit."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError('invalid_cache_usage')
+    if style == 'messages':
+        ordinary = integer(raw['input_tokens'])
+        output = integer(raw['output_tokens'])
+        read = raw.get('cache_read_input_tokens')
+        write = raw.get('cache_creation_input_tokens')
+        read = integer(read) if read is not None else None
+        write = integer(write) if write is not None else None
+        total = ordinary + read + write if read is not None and write is not None else None
+    elif style in {'chat', 'responses'}:
+        key = 'prompt_tokens' if style == 'chat' else 'input_tokens'
+        out = 'completion_tokens' if style == 'chat' else 'output_tokens'
+        total, output = integer(raw[key]), integer(raw[out])
+        details = raw.get(key + '_details') or {}
+        if not isinstance(details, dict):
+            raise ValueError('invalid_cache_usage')
+        read = details.get('cached_tokens')
+        write = details.get('cache_write_tokens')
+        read = integer(read) if read is not None else None
+        write = integer(write) if write is not None else None
+        if (read or 0) + (write or 0) > total:
+            raise ValueError('invalid_cache_usage_subsets')
+    else:
+        raise ValueError('unsupported_usage_style')
+    return dict(input_tokens=total, output_tokens=output,
+                cache_read_tokens=read, cache_write_tokens=write)
+
+
+def rates(values):
+    result = {k: Decimal(str(values[k])) for k in ('base', 'read', 'write')}
+    if any(not x.is_finite() or x < 0 for x in result.values()):
+        raise ValueError('invalid_cache_prices')
+    if not result['read'] < result['base'] <= result['write']:
+        raise ValueError('invalid_cache_price_order')
+    return result
+
+
+def break_even(values):
+    p = rates(values)
+    return float((p['write'] - p['base']) / (p['base'] - p['read']))
+
+
+def report(raw, *, style, prices, ttl_seconds, synthetic=False):
+    p = rates(prices)
+    if type(ttl_seconds) is not int or ttl_seconds <= 0:
+        raise ValueError('invalid_prefix_ttl')
+    u = normalize_usage(raw, style)
+    read = u['cache_read_tokens'] if u else None
+    write = u['cache_write_tokens'] if u else None
+    known = u is not None and read is not None and write is not None
+    saving = ordinary = None
+    if known:
+        ordinary = u['input_tokens'] - read - write
+        saving = float((Decimal(read) * (p['base'] - p['read'])
+                        - Decimal(write) * (p['write'] - p['base'])) / Decimal(1000000))
+    return dict(provider_called=True, answer_cache_hit=False,
+                provider_cache_status='unknown' if read is None else 'hit' if read > 0 else 'miss',
+                cached_input_tokens=read, cache_write_tokens=write,
+                uncached_input_tokens=ordinary, estimated_input_saving_usd=saving,
+                break_even_reads_per_write=break_even(prices), ttl_seconds=ttl_seconds,
+                evidence='synthetic_usage' if synthetic else 'provider_usage', normalized_usage=u)
+
+
+def require_production_evidence(records):
+    if not records or any(r.get('evidence') != 'provider_usage'
+                          or r.get('provider_cache_status') == 'unknown'
+                          or r.get('normalized_usage') is None for r in records):
+        raise ValueError('real_provider_cache_evidence_required')
+    if records[0].get('cached_input_tokens') != 0:
+        raise ValueError('cold_request_required')
+    if len(records) < 2 or any((r.get('cached_input_tokens') or 0) <= 0 for r in records[1:]):
+        raise ValueError('sequential_warm_evidence_required')
+
+
+def choose_tenant_policy(interval_seconds, requests, policies):
+    """Finite equal-length steady run; reads refresh idle expiry."""
+    if (type(requests) is not int or requests < 1
+            or type(interval_seconds) not in (int, float)
+            or not math.isfinite(interval_seconds) or interval_seconds <= 0):
+        raise ValueError('invalid_traffic_assumption')
+    candidates = []
+    for name in ('default', 'extended'):
+        item = policies[name]
+        ttl = item['ttl_seconds']
+        if type(ttl) is not int or ttl <= 0:
+            raise ValueError('invalid_prefix_ttl')
+        reads, writes = (requests - 1, 1) if interval_seconds < ttl else (0, requests)
+        p = rates(item['prices'])
+        net = reads * (p['base'] - p['read']) - writes * (p['write'] - p['base'])
+        if net > 0:
+            candidates.append((net, name))
+    if not candidates:
+        return 'shared_only'
+    return max(candidates, key=lambda pair: (pair[0], pair[1] == 'default'))[1]
+
+
+def prefix_configuration(path='config/performance.yml'):
+    c = yaml.safe_load(Path(path).read_text())['provider_prompt_cache']
+    if c.get('record_content') is not False or c.get('price_basis') != 'illustrative':
+        raise ValueError('unsafe_prefix_configuration')
+    for name in ('default', 'extended'):
+        item = c['policies'][name]
+        rates(item['prices'])
+        if type(item['ttl_seconds']) is not int or item['ttl_seconds'] <= 0:
+            raise ValueError('invalid_prefix_ttl')
+    return c
+
+
+FIELDS.update({'provider_cache_status', 'cached_input_tokens', 'cache_write_tokens',
+               'uncached_input_tokens', 'estimated_input_saving_usd', 'answer_cache_hit',
+               'provider_called', 'prefix_identity', 'prefix_layout_version', 'ttl_seconds'})
+
+
+def emit_provider_prefix(evidence, prompt):
+    with span('python.provider_prefix', stage='provider',
+              cost_basis=evidence['evidence']) as event:
+        event.set(**{k: evidence[k] for k in (
+            'provider_cache_status', 'cached_input_tokens', 'cache_write_tokens',
+            'uncached_input_tokens', 'estimated_input_saving_usd',
+            'answer_cache_hit', 'provider_called', 'ttl_seconds')})
+        event.set(prefix_identity=prompt.prefix_identity,
+                  prefix_layout_version=prompt.prefix_version)

@@ -532,3 +532,25 @@ class CalibrationClient:
             raise ValueError('unrecorded_evidence')
         record = self.records[row['id']]
         return json.dumps(record.get(revision, record['baseline']))
+
+
+class PrefixClient:
+    """Cache-aware triage through the existing bounded HTTP client."""
+    def __init__(self, provider, *, prices, ttl_seconds, synthetic=False):
+        self.provider = provider
+        self.prices, self.ttl_seconds = prices, ttl_seconds
+        self.synthetic = synthetic or getattr(provider, 'prefix_offline', False) is True
+
+    async def complete(self, prompt):
+        from anchor_ai.provider import UsageTap
+        from anchor_ai.observability import report, emit_provider_prefix
+        tap = UsageTap(self.provider)
+        client = LlmClient(tap)
+        result = await client.complete_result(prompt)
+        if result.finish_reason != 'stop':
+            raise ValueError('incomplete_triage')
+        validate_triage(result.reply)
+        evidence = report(tap.raw_usage, style='chat', prices=self.prices,
+                          ttl_seconds=self.ttl_seconds, synthetic=self.synthetic)
+        emit_provider_prefix(evidence, prompt)
+        return result.reply, evidence

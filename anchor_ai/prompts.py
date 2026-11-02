@@ -146,3 +146,88 @@ async def resolve_reply_prompt(*, http_client=None):
         return await fetch(http_client)
     async with httpx.AsyncClient() as client:
         return await fetch(client)
+
+
+from dataclasses import dataclass
+
+LAYOUT_VERSION = 'triage-prefix:v1'
+PLATFORM_POLICY = POLICY.replace(
+    'Classify a support ticket for fictional tenant Harbor Outfitters.',
+    'Classify a support ticket for the authorized tenant supplied as data.')
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False, allow_nan=False)
+
+
+def digest(value):
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+
+@dataclass(frozen=True)
+class AuthorizedScope:
+    """Construct only after Anchor's existing tenant authorization check."""
+    tenant_id: int
+    role: str
+    audience: str
+    permission_version: str
+
+    def __post_init__(self):
+        if type(self.tenant_id) is not int or self.tenant_id <= 0:
+            raise ValueError('invalid_tenant')
+        if any(not isinstance(v, str) or not v.strip() for v in
+               (self.role, self.audience, self.permission_version)):
+            raise ValueError('incomplete_authorized_scope')
+
+    @property
+    def namespace(self):
+        return digest(canonical(self.__dict__))
+
+
+class PrefixPrompt(str):
+    pass
+
+
+def layout(*, scope, ticket, retrieved_context='', tools=(),
+           model='gpt-4o-mini', policy=PLATFORM_POLICY,
+           examples=FEW_SHOT_EXAMPLES, version=LAYOUT_VERSION,
+           tenant_policy='', tenant_policy_version='', tenant_prefix=False,
+           timestamp='', unstable=False):
+    if not isinstance(scope, AuthorizedScope):
+        raise ValueError('authorized_scope_required')
+    if not isinstance(ticket, str) or not ticket.strip():
+        raise ValueError('ticket_required')
+    if not model or not version:
+        raise ValueError('prefix_version_required')
+    ordered = sorted(tools, key=lambda t: t['name'])
+    names = [t['name'] for t in ordered]
+    if len(names) != len(set(names)):
+        raise ValueError('duplicate_tool_definition')
+    shared = '\n\n'.join((canonical({'layout_version': version, 'model': model}),
+                          policy, 'Tool definitions:\n' + canonical(ordered), examples))
+    extension = canonical({'namespace': scope.namespace, 'tenant_id': scope.tenant_id,
+                           'tenant_policy_version': tenant_policy_version,
+                           'tenant_policy': tenant_policy})
+    if tenant_prefix and (not tenant_policy or not tenant_policy_version):
+        raise ValueError('versioned_tenant_policy_required')
+    prefix = shared + ('\n\nTenant policy data:\n' + extension if tenant_prefix else '')
+    tail = canonical({
+        'retrieved_context': retrieved_context,
+        'tenant': {'id': scope.tenant_id, 'role': scope.role,
+                   'audience': scope.audience, 'permission_version': scope.permission_version},
+        'tenant_policy_data': None if tenant_prefix else extension,
+        'ticket': ticket, 'timestamp': timestamp})
+    if unstable:
+        prefix = tail + '\n\n' + prefix
+    prompt = PrefixPrompt(ticket)
+    prompt.context_messages = [
+        {'role': 'system', 'content': prefix},
+        {'role': 'user', 'content': 'Untrusted request data:\n' + tail}]
+    prompt.context_model = model
+    prompt.context_temperature = 0.0
+    prompt.prefix_bytes = prefix.encode('utf-8')
+    prompt.prefix_identity = digest(prefix)
+    prompt.shared_identity = digest(shared)
+    prompt.prefix_version = version
+    return prompt

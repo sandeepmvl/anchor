@@ -51,6 +51,16 @@ class PromptRegistry
     resolve(ENV.fetch('ANCHOR_REPLY_PROMPT_VERSION', 'chat:v3'))
   end
 
+  # Separate from immutable chat contracts; never export tenant policy here.
+  def self.triage_prefix_layout
+    settings = Rails.application.config_for(:llm)
+    version = settings.fetch(:provider_prefix_layout_version)
+    unless version == 'triage-prefix:v1'
+      raise ArgumentError, 'Unsupported provider prefix layout'
+    end
+    version.freeze
+  end
+
   # This public export deliberately has no tenant-private export capability.
   def self.export_regression(tags:)
     unless tags == %w[chat:v1 chat:v2]
