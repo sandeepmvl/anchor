@@ -1,0 +1,18 @@
+version: 1
+record_content: false
+host: 127.0.0.1
+port: 8765
+model_alias: tiny-llama
+samples: 8
+max_new_tokens: 32
+batching: single_request
+assumptions:
+  basis: simulated_not_hardware_evidence
+  parameters: 1100000000
+  bytes_per_weight: 2
+  layers: 22
+  kv_heads: 4
+  head_dimension: 64
+  bytes_per_kv_element: 2
+  context_tokens: 512
+  memory_budget_bytes: 4000000000

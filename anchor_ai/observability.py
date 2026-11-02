@@ -713,6 +713,27 @@ def emit_provider_prefix(evidence, prompt):
                   prefix_layout_version=prompt.prefix_version)
 
 
+def emit_serving_benchmark(record):
+    """Export a bounded, content-free benchmark summary on the caller trace."""
+    keys = {'target', 'execution_mode', 'concurrency', 'completed', 'failures',
+            'completed_req_s', 'latency_p50_ms', 'latency_p99_ms',
+            'ttft_p50_ms', 'ttft_p99_ms'}
+    if (set(record) != keys or record['target'] not in {'local', 'hosted'}
+            or record['execution_mode'] not in {'offline', 'live'}
+            or record['concurrency'] not in {1, 8}):
+        raise ValueError('unsafe_serving_benchmark')
+    for key in ('completed', 'failures'):
+        if type(record[key]) is not int or record[key] < 0:
+            raise ValueError('unsafe_serving_benchmark')
+    for key in keys - {'target', 'execution_mode', 'concurrency', 'completed', 'failures'}:
+        value = record[key]
+        if value is not None and (type(value) not in (int, float)
+                or not math.isfinite(value) or value < 0):
+            raise ValueError('unsafe_serving_benchmark')
+    with span('anchor.serving_benchmark', stage='llm') as item:
+        item.record['benchmark'] = dict(record)
+
+
 def batch_measurement(record):
     """Validate content-free scheduler measurements without inheriting a caller span."""
     if set(record) != {'batch_size', 'queue_ms', 'outstanding'}:

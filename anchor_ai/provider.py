@@ -726,6 +726,17 @@ class SyntheticPrefixProvider:
         return httpx.AsyncClient(transport=httpx.MockTransport(self.send), trust_env=False)
 
 
+def serving_benchmark_stream(message, *, mode='offline'):
+    """Explicit benchmark selection; never consult production routing defaults."""
+    if mode == 'offline':
+        provider = ReplayProvider()
+    elif mode == 'live':
+        provider = LiveProvider()
+    else:
+        raise ValueError('invalid_benchmark_mode')
+    return stream_tokens(provider, message)
+
+
 def offline_batch_provider():
     """Explicit offline bulk adapter; never selects a live provider implicitly."""
     from anchor_ai.batching import OfflineBatchProvider
