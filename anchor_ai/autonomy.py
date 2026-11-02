@@ -56,6 +56,16 @@ class ExecutionRun:
         self.review_grants = set()
         self.paused = None
 
+    def incident_allowed(self, scope):
+        """Trusted server hook only; a scope's old approval is not live permission."""
+        check = scope._execution.get('incident_check')
+        if check is None:
+            return True
+        try:
+            return check(scope.tenant_id) is True
+        except Exception:
+            return False
+
     def matches(self, scope):
         return self.identity == (scope.tenant_id, scope.conversation_id, scope.role)
 
@@ -95,6 +105,8 @@ class ExecutionRun:
 
     async def step(self, scope):
         async with self.lock:
+            if not self.incident_allowed(scope):
+                return self.denied(scope, 'human_only')[0]
             if not self.matches(scope):
                 return self.denied(scope, 'scope_denied')[0]
             if self.paused is not None:
@@ -109,7 +121,10 @@ class ExecutionRun:
         return None
 
     async def admit(self, scope, name, arguments, *, owns=True):
+        """Recheck live incident permission before reserving a tool call."""
         async with self.lock:
+            if not self.incident_allowed(scope):
+                return self.denied(scope, 'human_only')
             if not self.matches(scope):
                 return self.denied(scope, 'scope_denied')
             if self.paused is not None:
@@ -203,6 +218,9 @@ async def guarded_dispatch(call, registry, scope, execute, run=None):
                 return {'call_id': call.call_id, 'payload': {'ok': False, 'error': 'execution_error'}}
         return {'call_id': call.call_id, 'payload': {'ok': True, 'data': {
             'dry_run': True, 'proposed_action': call.name, 'arguments': arguments}}}
+    if not state.incident_allowed(scope):
+        error, _ = state.denied(scope, 'human_only')
+        return {'call_id': call.call_id, 'payload': {'ok': False, 'error': error}}
     result = await execute(call, registry, scope, idempotency_key=key)
     if not result['payload']['ok']:
         state.halted = True

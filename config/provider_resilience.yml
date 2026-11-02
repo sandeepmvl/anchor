@@ -1,4 +1,6 @@
 # Accelerated offline policy, not production latency recommendations.
+# Incident fallback shares this deadline, attempt budget, and CircuitStore.
+# Never add an outer retry loop or let a fallback reset these counters.
 max_attempts: 4
 retries_per_provider: 1
 total_seconds: 0.5

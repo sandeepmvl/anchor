@@ -20,6 +20,11 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
     ENV["ANCHOR_AI_READ_TIMEOUT"] = "5"
     ENV["ANCHOR_CHAT_PROMPT_VERSION"] = "chat:v1"
     @old_answer_generator = ChatController.answer_generator
+    # UXFixtures signs customer claims for tenant 1. Incident control now
+    # resolves that tenant through the real organization authority row.
+    Organization.find_or_create_by!(id: 1) do |organization|
+      organization.name = 'Cited chat test tenant'
+    end
   end
 
   teardown do

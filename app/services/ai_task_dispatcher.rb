@@ -7,6 +7,7 @@ class AiTaskDispatcher
         evidence["ANCHOR_AGENT_IDEMPOTENCY_VERIFIED"] == "1"
       raise ReleaseBlocked, "downstream_idempotency_evidence_missing"
     end
+    AiIncidentControl.release_check!(production: production, evidence: evidence)
     AiQuotaPolicy.release_check!(production: production,
       config: JSON.parse(Rails.root.join('config/ai_budgets.yml').read), evidence: evidence)
   end
@@ -59,10 +60,13 @@ class AiTaskDispatcher
         idempotency_key: key)
     end
     agent = lambda do |payload, key|
-      AgentOrchestrationClient.new.execute(payload.fetch("request"),
-        execution_context: payload.fetch("execution_context"),
-        request_id: payload.fetch("request_id"), traceparent: payload["traceparent"],
-        idempotency_key: key)
+      AiIncidentControl.run_agent(organization_id: task.organization_id,
+        payload: payload, key: key) do
+        AgentOrchestrationClient.new.execute(payload.fetch("request"),
+          execution_context: payload.fetch("execution_context"),
+          request_id: payload.fetch("request_id"), traceparent: payload["traceparent"],
+          idempotency_key: key)
+      end
     end
     task.run!(ingestion: ingestion, agent: agent)
   end

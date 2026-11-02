@@ -48,6 +48,10 @@ require_relative '../../app/models/tool_action'
 require_relative '../../app/models/action_reversal_log'
 require_relative '../../db/migrate/20260101001300_create_tool_actions_and_reversal_logs'
 CreateToolActionsAndReversalLogs.new.migrate(:up)
+require_relative '../../db/migrate/20260101001500_create_ai_operating_modes'
+CreateAiOperatingModes.new.migrate(:up)
+require_relative '../../app/models/ai_operating_mode'
+require_relative '../../app/services/ai_incident_control'
 require_relative '../../app/services/tool_action_executor'
 require_relative '../../app/services/tool_action_reverser'
 
@@ -58,6 +62,7 @@ class SafeToolActionsTest < Minitest::Test
     ActionReversalLog.delete_all
     ToolAction.delete_all
     Order.delete_all
+    AiOperatingMode.delete_all
     Organization.delete_all
     @org = Organization.create!(name: 'Anchor test tenant')
     @order = Order.create!(organization_id: @org.id, reference: 'A100', payment_id: 'fake_A100',

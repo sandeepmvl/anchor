@@ -1,6 +1,9 @@
 <%= csrf_meta_tags %>
 <% if @ticket %>
   <h1><%= @ticket.subject %></h1>
+  <% if @human_only %>
+    <aside role="status" aria-label="Human support escalation"><%= AiIncidentControl.config.fetch('message') %></aside>
+  <% end %>
   <aside aria-label="Realtime voice">
     <p>Realtime voice uses ticket-bound credentials. Spoken approval never executes an action.</p>
     <p>The local voice client verifies interruption and evidence events; browser audio acceptance is separate.</p>
@@ -123,6 +126,11 @@
         });
         if (!response.ok) throw new Error('Chat HTTP ' + response.status);
         const result = await response.json(), reply = result.cited_answer;
+        if (result.handoff === true) {
+          answer.textContent = result.reply;
+          state.textContent = 'Human support escalation';
+          return;
+        }
         if (!reply || !['answer', 'hedge', 'refuse'].includes(reply.decision)) throw new Error('Invalid answer');
         answer.textContent = reply.answer;
         state.textContent = {answer: 'Supported answer', hedge: 'Uncertain — check conditions', refuse: 'No supporting answer found'}[reply.decision];

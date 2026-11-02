@@ -1,7 +1,21 @@
 require_relative '../../labs/pii-detection-and-redaction/test_helper'
 
 if defined?(PiiIntegrationCase)
+  # This standalone harness supplies its own schema rather than running Rails migrations.
+  require_relative '../../app/models/ai_operating_mode'
+  require_relative '../../app/services/ai_incident_control'
+  unless ActiveRecord::Base.connection.table_exists?(:ai_operating_modes)
+    require_relative '../../db/migrate/20260101001500_create_ai_operating_modes'
+    CreateAiOperatingModes.new.migrate(:up)
+  end
+
   class PiiPipelineTest < PiiIntegrationCase
+    def setup
+      # Delete child rows before the harness resets its organizations. These tests
+      # exercise normal chat; incident denial is covered by human_only_mode_test.
+      AiOperatingMode.delete_all
+      super
+    end
     def assert_no_originals(value)
       encoded = value.is_a?(String) ? value : JSON.generate(value)
       @fixture.fetch('identifiers').each { |identifier| refute_includes encoded, identifier }

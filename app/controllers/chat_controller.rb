@@ -16,6 +16,7 @@ class ChatController < ApplicationController
     return unless params[:ticket_id].present?
     policy = TicketAccessPolicy.new(session)
     @ticket = policy.ticket(params[:ticket_id])
+    @human_only = AiIncidentControl.human_only?(@ticket.organization_id)
     @attachments = @ticket.ticket_attachments.where(organization_id: @ticket.organization_id).order(:id)
   rescue TicketAccessPolicy::Unauthenticated
     head :unauthorized
@@ -36,6 +37,9 @@ class ChatController < ApplicationController
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
       message = params.require(:message)
       persist_pii_ingestion(message)
+      if @pii_conversation && AiIncidentControl.human_only?(@pii_conversation.organization_id)
+        return render_incident_handoff('human_only')
+      end
       # Python screens extracted KB evidence and customer text before generation.
       # Never promote message, history, or evidence into trusted approval context.
       retrieval = retrieval_settings
@@ -88,6 +92,9 @@ class ChatController < ApplicationController
   rescue LlmClient::BoundaryError => error
     # Preserve the existing boundary contract without depending on lazy load-hook timing.
     response.set_header('Retry-After', error.retry_after.to_s) unless error.retry_after.nil?
+    if %w[routing_unavailable routing_deadline routing_attempt_limit incident_human_only].include?(error.code)
+      return render_incident_handoff(error.code)
+    end
     body = { error: error.code }
     body.merge!(error.details) if error.code == 'invalid_model_output'
     if error.code.start_with?('provider_')
@@ -103,6 +110,10 @@ class ChatController < ApplicationController
   def cited
     token = session[:anchor_customer_context].presence || request.authorization.to_s.delete_prefix('Bearer ')
     claims = GoldenCandidate.claims!(token, purpose: 'answer_customer')
+    if AiIncidentControl.human_only?(claims.fetch('tenant_id').to_i)
+      return render json: AiIncidentControl.handoff(
+        { 'conversation_id' => claims.fetch('conversation_id'), 'message' => params[:message].to_s })
+    end
     unless answer_generator.respond_to?(:call)
       return render json: {error: 'generation_unavailable'}, status: :service_unavailable
     end
@@ -138,6 +149,23 @@ class ChatController < ApplicationController
   end
 
   private
+
+  def render_incident_handoff(reason)
+    context = { 'message' => params[:message].to_s }
+    if @pii_conversation
+      context['conversation_id'] = @pii_conversation.id
+      context['ticket_id'] = @pii_conversation.ticket_id
+    end
+    body = AiIncidentControl.handoff(context, reason: reason)
+    persist_pii_reply(body)
+    if stream_request?
+      response.headers['Content-Type'] = 'text/event-stream; charset=utf-8'
+      payload = JSON.generate(code: reason, message: body.fetch('reply'), handoff: true)
+      write_stream_packet("event: error\ndata: #{payload}\n\n")
+    else
+      render json: body
+    end
+  end
 
   def reject_untrusted_tenant_state
     authority = %w[approval confirmed execution_context tenant_credential role]
@@ -282,7 +310,9 @@ class ChatController < ApplicationController
   end
 
   def write_stream_error(code)
-    payload = JSON.generate(code: code, message: 'Reply interrupted; please retry.')
+    incident = %w[upstream_failed early_end read_timeout runtime_failure].include?(code)
+    message = incident ? AiIncidentControl.config.fetch('message') : 'Reply interrupted; please retry.'
+    payload = JSON.generate(code: code, message: message, handoff: incident)
     write_stream_packet("event: error\ndata: #{payload}\n\n")
   end
 end

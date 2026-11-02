@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eval.regression_provider import (ReplayClient, digest, envelope,
     fixture_input, load_manifest, REPLAYS)
 from eval.regression_assertions import results
+from anchor_ai.provider import ProviderError
 
 
 def incident_checks():
@@ -95,7 +96,11 @@ def gate(report, release=False):
                 rates['chat:v1'] - rates['chat:v2'] > manifest['tolerance']):
             regressed.append(example['id'])
     blockers = []
-    incident_checks()
+    try:
+        incident_checks()
+    except ProviderError:
+        # Preserve the prompt diagnosis, but never approve unavailable evidence.
+        blockers.append('incident_authority_unavailable')
     if rate < manifest['assertion_threshold']:
         blockers.append('candidate_assertion_pass_rate')
     if regressed:
@@ -137,7 +142,7 @@ def main():
         else:
             report = json.loads(path.read_text())
         decision = gate(report, args.release)
-    except (ValueError, KeyError, TypeError, OSError, AssertionError) as error:
+    except (ValueError, KeyError, TypeError, OSError, AssertionError, ProviderError) as error:
         print(json.dumps({'passed': False, 'error': str(error)}))
         return 1
     print(json.dumps(decision, indent=2))

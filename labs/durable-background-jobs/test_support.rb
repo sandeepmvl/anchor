@@ -28,6 +28,7 @@ class ApplicationRecord < ActiveRecord::Base
 end
 class ApplicationJob < ActiveJob::Base; end
 class ApplicationController < ActionController::Base; end
+class Organization < ApplicationRecord; end
 class Membership < ApplicationRecord; end
 class LabEffect < ApplicationRecord; end
 class DocumentIngestionClient
@@ -37,10 +38,15 @@ end
 require File.join(DurableTaskLab::ROOT, "db/migrate/20260101000800_create_ai_tasks")
 CreateAiTasks.new.migrate(:up)
 ActiveRecord::Schema.define do
+  create_table(:organizations) { |t| t.string :name }
   create_table(:memberships) { |t| t.integer :user_id; t.integer :organization_id }
   create_table(:lab_effects) { |t| t.string :effect_key; t.string :kind }
   add_index :lab_effects, :effect_key, unique: true
 end
+require File.join(DurableTaskLab::ROOT, "db/migrate/20260101001500_create_ai_operating_modes")
+CreateAiOperatingModes.new.migrate(:up)
+require File.join(DurableTaskLab::ROOT, "app/models/ai_operating_mode")
+require File.join(DurableTaskLab::ROOT, "app/services/ai_incident_control")
 require File.join(DurableTaskLab::ROOT, "app/models/ai_task")
 require File.join(DurableTaskLab::ROOT, "app/services/ai_task_dispatcher")
 require File.join(DurableTaskLab::ROOT, "app/jobs/ingest_document_job")
@@ -70,6 +76,9 @@ module DurableTaskLab
     AiTask.delete_all
     LabEffect.delete_all
     Membership.delete_all
+    AiOperatingMode.delete_all
+    Organization.delete_all
+    Organization.create!(id: 1, name: "Durable task tenant")
     ActiveJob::Base.queue_adapter.enqueued_jobs.clear
   end
 

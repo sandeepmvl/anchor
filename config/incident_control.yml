@@ -1,0 +1,11 @@
+version: 1
+scope: organization
+trigger: authenticated_admin_service_call
+reenable: explicit_admin_change_with_reason
+message: "Automatic processing is unavailable. Your ticket is being handed to a human; we will verify any pending refund before further action."
+# Stop acknowledgement waits for an admitted local critical section to finish.
+# It does not cancel a request already sent or reverse a committed refund.
+# Never put credentials in a human handoff.
+production_evidence:
+  - ANCHOR_INCIDENT_COORDINATION_VERIFIED
+  - ANCHOR_PAYMENT_IDEMPOTENCY_VERIFIED

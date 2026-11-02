@@ -8,6 +8,9 @@ class ToolActionExecutor
   end
 
   def authorize!(member, order, reverse: false)
+    if !reverse && AiIncidentControl.human_only?(order.organization_id)
+      raise Denied, 'human_only'
+    end
     roles = reverse ? %w[admin] : %w[admin agent]
     unless member.organization_id == order.organization_id && roles.include?(member.role)
       raise Denied, 'action_denied'
@@ -62,6 +65,7 @@ class ToolActionExecutor
     claims = verify(receipt, 'confirmation', member, order)
     raise Denied, 'proposal_mismatch' unless claims['arguments'] == arguments
     raise Denied, 'payment_adapter_required' unless @local
+    AiIncidentControl.with_ai_permission!(order.organization_id) do
     ToolAction.transaction do
       order.lock!
       action = ToolAction.lock.find(claims['action_id'])
@@ -84,6 +88,9 @@ class ToolActionExecutor
       action.update!(status: 'executed', result: result)
       result
     end
+    end
+  rescue AiIncidentControl::HumanOnly
+    raise Denied, 'human_only'
   end
 
   # Called only after the existing authoritative signed-approval policy succeeds.

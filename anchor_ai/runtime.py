@@ -95,13 +95,15 @@ class BoundedRuntime:
     Financial backends MUST durably deduplicate key and bind it to arguments.
     """
     def __init__(self, path, *, verify, model, retrieve, backend,
-                 policy_path='config/agent_policy.yml', emit=None):
+                 policy_path='config/agent_policy.yml', emit=None,
+                 incident_check=None):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.verify = verify
         self.model = model
         self.retrieve = retrieve
         self.backend = backend
+        self.incident_check = incident_check
         self.policy = yaml.safe_load(Path(policy_path).read_text())
         self.emit = emit or (lambda event: None)
         with self.db() as db:
@@ -265,8 +267,20 @@ class BoundedRuntime:
                       conversation_id=scope.conversation_id):
                 return await self.loop(scope, s)
 
+    def incident_allowed(self, scope):
+        if self.incident_check is None:
+            return True
+        try:
+            return self.incident_check(scope.tenant_id) is True
+        except Exception:
+            return False
+
     async def loop(self, scope, s):
         while s['phase'] < len(s['plan']):
+            if not self.incident_allowed(scope):
+                s['reply'] = ('Automatic processing is unavailable. Your ticket is being handed '
+                              'to a human; we will verify any pending refund before further action.')
+                return self.stop(s, 'denied', 'human_only')
             if time.time() - s['started'] >= s['caps']['deadline_seconds']:
                 return self.stop(s, 'exhausted', 'deadline')
             if s['pending'] is None:
@@ -325,6 +339,8 @@ class BoundedRuntime:
                 s['cost_units'] += cost
                 s['pending']['reserved'] = True
                 self.save(s)
+            if not self.incident_allowed(scope):
+                return self.stop(s, 'denied', 'human_only')
             try:
                 with span('python.bounded_agent.tool',
                           stage='retrieval' if action == 'retrieve' else 'tool', tool_name=action):

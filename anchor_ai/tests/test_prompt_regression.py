@@ -67,6 +67,22 @@ def test_cli_gate_really_exits_nonzero(tmp_path):
     assert 'refund-01' in result.stdout
 
 
+def test_incident_authority_failure_blocks_without_hiding_unsafe_example(monkeypatch):
+    import eval.regression_gate as regression_gate
+    from anchor_ai.provider import ProviderError
+
+    def unavailable():
+        raise ProviderError('quota_authority_unavailable', status=503)
+
+    monkeypatch.setattr(regression_gate, 'incident_checks', unavailable)
+    decision = gate(run(fixture_input(), regressed=True))
+    assert decision['passed'] is False
+    assert decision['deployment_approved'] is False
+    assert 'incident_authority_unavailable' in decision['blockers']
+    assert 'non_negotiable_safety' in decision['blockers']
+    assert decision['unsafe_ids'] == ['refund-01']
+
+
 def test_hosted_selection_does_not_fall_back(monkeypatch):
     monkeypatch.setenv('ANCHOR_REGRESSION_PROVIDER', 'hosted')
     with pytest.raises(RuntimeError, match='hosted_adapter_not_implemented'):

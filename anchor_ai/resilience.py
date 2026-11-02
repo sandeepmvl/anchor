@@ -173,6 +173,16 @@ class ResilienceBoundary:
         from anchor_ai.provider import ProviderError
         return ProviderError(code, status=503)
 
+    def incident_allowed(self, tenant_id):
+        """Optional trusted live check; provider payloads cannot supply this hook."""
+        check = getattr(self.router, 'incident_check', None)
+        if check is None:
+            return True
+        try:
+            return check(tenant_id) is True
+        except Exception:
+            return False
+
     async def send(self, name, request, payload, allowance, permit):
         from anchor_ai.provider import ProviderError, classify
         outcome = 'neutral'
@@ -210,6 +220,8 @@ class ResilienceBoundary:
             self.active -= 1
 
     async def operation(self, request, tenant_id, payload):
+        if not self.incident_allowed(tenant_id):
+            raise self.error('incident_human_only')
         deadline = self.clock() + self.policy['total_seconds']
         attempts, retry_index = 0, 0
         async with asyncio.timeout(self.policy['total_seconds']):
@@ -228,6 +240,10 @@ class ResilienceBoundary:
                     if permit is None:
                         self.event('circuit_skip', attempts)
                         break
+                    if not self.incident_allowed(tenant_id):
+                        self.store.finish(circuit_key(self.router, name), permit, 'neutral')
+                        self.event('human_only', attempts)
+                        raise self.error('incident_human_only')
                     attempts += 1
                     response, error = await self.send(name, request, payload,
                         min(self.policy['attempt_seconds'], remaining), permit)
