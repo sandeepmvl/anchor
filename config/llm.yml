@@ -1,0 +1,2 @@
+shared:
+  provider: <%= ENV.fetch("ANCHOR_LLM_PROVIDER", "stub").inspect %>
