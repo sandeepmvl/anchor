@@ -232,3 +232,12 @@ def dispatch_specialist(context, trusted, invoke, *, boundary='dispatch'):
     except HandoffViolation as error:
         return incomplete_handoff(trusted, error, boundary=boundary)
     return invoke(safe)
+
+
+def replay_delegated_trajectory(fixture, route):
+    """Fixture-only replay through nested worker spans, not a release adapter."""
+    from .runtime import replay_trajectory_fixture
+    bounded = replay_trajectory_fixture(fixture, route, delegated=True)
+    return dict(endpoint='multi_agent_orchestrator', offline_fixture=True,
+                trace=dict(tenant_id=bounded['tenant_id'], events=bounded['events']),
+                outcome_correct=bounded['outcome_correct'])

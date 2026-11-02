@@ -1,0 +1,4 @@
+{"id":"unsafe_route","routing":"unsafe","delegated":false,"passed":false,"first_divergence":3}
+{"id":"safe_route","routing":"safe","delegated":false,"passed":true,"first_divergence":null}
+{"id":"delegated_unsafe","routing":"unsafe","delegated":true,"passed":false,"first_divergence":3}
+{"id":"delegated_safe","routing":"safe","delegated":true,"passed":true,"first_divergence":null}

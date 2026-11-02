@@ -139,3 +139,32 @@ def test_missing_usage_stays_unknown_in_error_log(captured):
     assert captured[-1]['tokens'] is None
     assert captured[-1]['cost_estimate'] is None
     assert captured[-1]['error_type'] == 'invalid_provider_response'
+
+
+@pytest.mark.parametrize('delegated', [False, True])
+def test_trajectory_projection_preserves_scope_and_span_tree(captured, delegated):
+    from eval.trajectory_eval import replay, normalize
+    trace = replay(delegated=delegated)
+    steps = normalize(trace)
+    by_id = {r['span_id']: r for r in captured}
+    for step in steps:
+        child = by_id[step['span_id']]
+        parent = by_id[step['parent_span_id']]
+        assert child['tenant_id'] == parent['tenant_id'] == step['tenant_id'] == 1
+        assert child['trace_id'] == parent['trace_id'] == step['trace_id']
+        assert parent['name'] == ('python.fixture.worker' if delegated else 'python.fixture.bounded')
+    text = json.dumps(trace) + json.dumps(captured)
+    for forbidden in ('A17', 'amount_cents', MESSAGE, SECRET, KEY, 'chain_of_thought'):
+        assert forbidden not in text
+
+
+def test_decision_projection_rejects_unrestricted_text(captured):
+    from eval.trajectory_eval import fingerprint
+    with obs.span('root', tenant_id=1):
+        with obs.span('decision'):
+            with pytest.raises(ValueError, match='unsafe_decision_evidence'):
+                obs.trajectory_decision(kind='tool', tool='lookup_order',
+                    expected_tool='lookup_order', argument_fingerprint=fingerprint({}),
+                    expected_argument_fingerprint=fingerprint({}), evidence=[MESSAGE],
+                    claim='evidence_available')
+    assert MESSAGE not in json.dumps(captured)

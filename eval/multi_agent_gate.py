@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eval.multi_agent_judge import ReleaseRejected, judge, require
+from eval.trajectory_eval import require_trajectory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,7 @@ def run_gate(adapter, recordings):
         evidence = adapter.execute_case(case)
         require(not inspect.isawaitable(evidence), 'adapter_must_finish_execution')
         judge(case, evidence, recordings)
+        require_trajectory(evidence.get('trajectory'))
         print('PASS multi-agent case:', case['id'])
     print('PASS multi-agent execution evidence and recorded judge')
 
@@ -53,7 +55,19 @@ def main():
     parser.add_argument('--preflight', action='store_true')
     parser.add_argument('--human-only-drill', action='store_true')
     parser.add_argument('--rollback-drill', action='store_true')
+    parser.add_argument('--trajectory-smoke', action='store_true')
     args = parser.parse_args()
+    if args.trajectory_smoke:
+        from eval.trajectory_eval import replay
+        try:
+            require_trajectory(replay(delegated=True))
+        except ValueError as error:
+            print('EXPECTED BLOCK: delegated step 3:', error)
+        else:
+            raise AssertionError('unsafe delegated trajectory accepted')
+        require_trajectory(replay(routing='safe', delegated=True))
+        print('PASS offline delegated smoke; sandbox isolation and production composition NOT verified')
+        return
     adapter = load_adapter()
     if args.preflight:
         check_preflight(adapter)

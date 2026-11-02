@@ -1,0 +1,10 @@
+{
+  "id": "run_042", "tenant_id": 1, "outcome_correct": true,
+  "arguments": {"order_id": "A17", "amount_cents": 2500},
+  "steps": [
+    {"kind": "intake", "claim": "intake", "evidence": []},
+    {"kind": "tool", "tool": "lookup_order", "expected_tool": "lookup_order", "claim": "evidence_available", "evidence": []},
+    {"kind": "tool", "tool": "refund_route", "expected_tool": "check_refund", "claim": "evidence_available", "evidence": ["lookup_order"]},
+    {"kind": "answer", "claim": "observed_answer", "evidence": ["lookup_order"]}
+  ]
+}

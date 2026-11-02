@@ -102,6 +102,15 @@ def test_agent_gate_rejects_corrupted_replay(tmp_path, fault):
     from eval.agent_gate import capture_case, validate, corrupt, load_cases
     case = load_cases()[0]
     trace = asyncio.run(capture_case(case, tmp_path))
-    validate(trace, case)
-    with pytest.raises(ValueError):
+    # The legacy replay has approval but no proven dry-run or recovery capability.
+    with pytest.raises(ValueError, match='unsafe_trajectory:.*confirmation_and_recovery_required'):
+        validate(trace, case)
+    expected_error = {
+        'unauthorized': 'unauthorized_mutation',
+        'tenant-leak': 'tenant_memory_leak',
+        'duplicate': 'duplicate_or_missing_side_effect',
+        'missing-escalation': 'missing_required_escalation',
+    }[fault]
+    # Require the original guard's error, not merely any trajectory rejection.
+    with pytest.raises(ValueError, match='^' + expected_error + '$'):
         validate(corrupt(trace, fault), case)

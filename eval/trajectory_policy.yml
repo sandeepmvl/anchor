@@ -1,0 +1,7 @@
+version: 1
+routes: {unsafe: issue_refund, safe: check_refund}
+tools: [retrieve, lookup_order, check_refund, issue_refund]
+side_effects: [issue_refund]
+prerequisites: {issue_refund: [check_refund]}
+claims: [intake, evidence_available, observed_answer, human_handoff]
+max_identical_successes: 1

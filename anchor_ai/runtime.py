@@ -20,17 +20,22 @@ import hashlib
 import json
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import yaml
 
 from anchor_ai.contracts import AgentRequest, VerifiedExecution
-from anchor_ai.observability import span
+from anchor_ai.observability import span, trajectory_decision
 from anchor_ai.orchestration import select_flow, worker_for, propose
 
 ACTIONS = ['retrieve', 'lookup_order', 'check_refund', 'issue_refund']
 TERMINAL = {'completed', 'denied', 'exhausted', 'rejected', 'failed'}
+
+
+def argument_fingerprint(arguments):
+    return hashlib.sha256(json.dumps(arguments, sort_keys=True,
+                                    separators=(',', ':')).encode()).hexdigest()
 
 
 class ContextError(ValueError):
@@ -117,6 +122,18 @@ class BoundedRuntime:
                               proposed_action=s['arguments'], idempotency_key=s['key'],
                               tokens=s['tokens'], steps=s['steps'], calls=s['calls'])
         self.event(s, 'escalation', reason=reason, persisted=True)
+        # Safe projection of durable handoff evidence, never its raw context.
+        ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'],
+               'parent_span_id': s['trace_id'][:16]}
+        with span('python.bounded_agent.handoff', ctx=ctx, tenant_id=s['tenant_id'],
+                  conversation_id=s['conversation_id']):
+            digest = argument_fingerprint(s['arguments'])
+            self.event(s, 'trajectory', decision=trajectory_decision(
+                kind='handoff', claim='human_handoff', human_required=True,
+                argument_fingerprint=digest, expected_argument_fingerprint=digest,
+                handoff_complete=all(k in s['escalation'] for k in
+                    ('reason', 'plan', 'memory', 'attempts', 'caps', 'proposed_action',
+                     'tenant_id', 'conversation_id', 'orchestration'))))
         self.save(s)
         return s
 
@@ -276,6 +293,15 @@ class BoundedRuntime:
                                 or observation.get('idempotency_key') != s['key']
                                 or observation.get('amount_cents') != s['arguments']['amount_cents']):
                             raise ValueError('invalid_refund_receipt')
+                    digest = argument_fingerprint(s['arguments'])
+                    self.event(s, 'trajectory', decision=trajectory_decision(
+                        kind='tool', tool=action, expected_tool=s['plan'][s['phase']],
+                        argument_fingerprint=digest, expected_argument_fingerprint=digest,
+                        evidence=[m['action'] for m in s['memory']],
+                        claim='evidence_available',
+                        confirmed=bool(s['approval'] and s['approval']['digest'] == s['digest']),
+                        # No unproven production recovery capability is asserted.
+                        dry_run=False, reversible=False))
             except Exception:
                 s['attempts'][-1]['result'] = 'error'
                 self.event(s, 'memory_write', outcome='error')
@@ -293,3 +319,34 @@ class BoundedRuntime:
         self.event(s, 'complete', calls=s['calls'], tokens=s['tokens'])
         self.save(s)
         return s
+
+
+def replay_trajectory_fixture(fixture, route, *, delegated=False):
+    """Offline evidence adapter. No tools, model, authorization, or money movement."""
+    events = []
+    ctx = {'trace_id': hashlib.sha256(fixture['id'].encode()).hexdigest()[:32],
+           'request_id': fixture['id'], 'parent_span_id': None}
+    with span('python.fixture.bounded', ctx=ctx, tenant_id=fixture['tenant_id']):
+        for raw in fixture['steps']:
+            worker = span('python.fixture.worker') if delegated else nullcontext()
+            with worker:
+                with span('python.fixture.decision'):
+                    tool = raw.get('tool', 'none')
+                    if tool == 'refund_route':
+                        tool = route
+                    digest = argument_fingerprint(raw.get('arguments', fixture['arguments']))
+                    expected = argument_fingerprint(fixture['arguments'])
+                    decision = trajectory_decision(
+                        kind=raw['kind'], tool=tool,
+                        expected_tool=raw.get('expected_tool', 'none'),
+                        argument_fingerprint=digest, expected_argument_fingerprint=expected,
+                        evidence=raw.get('evidence', []), claim=raw['claim'],
+                        confirmed=raw.get('confirmed', False), dry_run=True,
+                        reversible=False, human_required=raw.get('human_required', False),
+                        handoff_complete=raw.get('handoff_complete', False),
+                        success=raw.get('success', True))
+                    events.append(dict(sequence=len(events) + 1, subsystem='trajectory',
+                                       tenant_id=fixture['tenant_id'], decision=decision))
+    return dict(endpoint='bounded_agent', offline_fixture=True,
+                tenant_id=fixture['tenant_id'], events=events,
+                outcome_correct=fixture['outcome_correct'])

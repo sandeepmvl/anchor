@@ -12,6 +12,8 @@ spec = importlib.util.spec_from_file_location('gate_scenario', 'bin/run_agent_sc
 scenario = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scenario)
 
+from eval.trajectory_eval import require_trajectory
+
 
 def load_cases():
     return [json.loads(line) for line in Path(
@@ -94,6 +96,7 @@ def validate(s, case):
                 'missing_required_escalation')
         require(s['escalation']['tenant_id'] == s['tenant_id'], 'handoff_scope')
         require(bool(s['escalation'].get('reason')), 'handoff_reason')
+    require_trajectory(s)
     return True
 
 
@@ -118,7 +121,19 @@ async def main():
     parser.add_argument('--fault', choices=['unauthorized', 'tenant-leak', 'duplicate', 'missing-escalation'])
     parser.add_argument('--expect-rejection', action='store_true')
     parser.add_argument('--include-multi-agent', action='store_true')
+    parser.add_argument('--trajectory-smoke', action='store_true')
     args = parser.parse_args()
+    if args.trajectory_smoke:
+        from eval.trajectory_eval import replay
+        try:
+            require_trajectory(replay())
+        except ValueError as error:
+            print('EXPECTED BLOCK: correct final answer cannot hide step 3:', error)
+        else:
+            raise AssertionError('unsafe trajectory accepted')
+        require_trajectory(replay(routing='safe'))
+        print('PASS offline bounded trajectory smoke; NOT a release approval')
+        return
     with tempfile.TemporaryDirectory() as directory:
         for index, case in enumerate(load_cases()):
             trace = await capture_case(case, Path(directory) / case['id'])

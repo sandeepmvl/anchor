@@ -107,6 +107,10 @@ class Span:
                            started_at=now(), status='ok', error_type=None,
                            error_message=None, tokens=None, cost_estimate=None)
         self.started = time.monotonic()
+        if parent:
+            for key in ('tenant_id', 'conversation_id'):
+                if key in parent.record:
+                    fields.setdefault(key, parent.record[key])
         self.set(**fields)
 
     def set(self, **fields):
@@ -245,3 +249,39 @@ FIELDS.update({'execution_mode', 'task_id', 'call_id', 'interop_protocol',
                'permission_decision', 'permission_reason'})
 ERRORS.add('delegation_rejected')
 ERRORS.add('orchestration_not_configured')
+
+
+TRAJECTORY_TOOLS = {'none', 'retrieve', 'lookup_order', 'check_refund', 'issue_refund'}
+TRAJECTORY_CLAIMS = {'intake', 'evidence_available', 'observed_answer', 'human_handoff'}
+
+
+def trajectory_decision(*, kind, tool='none', expected_tool='none',
+                        argument_fingerprint, expected_argument_fingerprint,
+                        evidence=(), claim, confirmed=False, dry_run=False,
+                        reversible=False, human_required=False,
+                        handoff_complete=False, success=True):
+    """Safe projection only; authority and expected values come from trusted state."""
+    current = CURRENT.get()
+    if current is None or type(current.record.get('tenant_id')) is not int:
+        raise ValueError('trajectory_scope_missing')
+    if (kind not in {'intake', 'tool', 'answer', 'handoff'}
+            or tool not in TRAJECTORY_TOOLS or expected_tool not in TRAJECTORY_TOOLS
+            or claim not in TRAJECTORY_CLAIMS
+            or not isinstance(evidence, (list, tuple))
+            or any(x not in TRAJECTORY_TOOLS - {'none'} for x in evidence)):
+        raise ValueError('unsafe_decision_evidence')
+    for value in (argument_fingerprint, expected_argument_fingerprint):
+        if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value):
+            raise ValueError('unsafe_argument_fingerprint')
+    flags = dict(confirmed=confirmed, dry_run=dry_run, reversible=reversible,
+                 human_required=human_required, handoff_complete=handoff_complete,
+                 success=success)
+    if any(type(value) is not bool for value in flags.values()):
+        raise ValueError('unsafe_decision_flags')
+    result = dict(kind=kind, tool=tool, expected_tool=expected_tool,
+                  argument_fingerprint=argument_fingerprint,
+                  expected_argument_fingerprint=expected_argument_fingerprint,
+                  evidence=list(evidence), claim=claim, **flags)
+    for key in ('tenant_id', 'trace_id', 'span_id', 'parent_span_id'):
+        result[key] = current.record.get(key)
+    return result
