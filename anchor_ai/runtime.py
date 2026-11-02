@@ -11,6 +11,7 @@ import yaml
 
 from anchor_ai.contracts import AgentRequest, VerifiedExecution
 from anchor_ai.observability import span
+from anchor_ai.orchestration import select_flow, worker_for, propose
 
 ACTIONS = ['retrieve', 'lookup_order', 'check_refund', 'issue_refund']
 TERMINAL = {'completed', 'denied', 'exhausted', 'rejected', 'failed'}
@@ -92,6 +93,9 @@ class BoundedRuntime:
         s['status'] = status
         s['escalation'] = dict(reason=reason, tenant_id=s['tenant_id'],
                               conversation_id=s['conversation_id'],
+                              plan=copy.deepcopy(s['plan']), phase=s['phase'],
+                              orchestration=copy.deepcopy(s.get('orchestration')),
+                              caps=copy.deepcopy(s['caps']), cost_units=s['cost_units'],
                               memory=copy.deepcopy(s['memory']),
                               attempts=copy.deepcopy(s['attempts']),
                               proposed_action=s['arguments'], idempotency_key=s['key'],
@@ -151,6 +155,7 @@ class BoundedRuntime:
                          steps=0, calls=0, cost_units=0, tokens=0, memory=[],
                          attempts=[], events=[], pending=None, approval=None,
                          caps=dict(self.policy['run']), started=time.time())
+                s['orchestration'] = select_flow(req.ticket_type)
                 self.event(s, 'planner_selection', strategy=strategy)
                 self.save(s)
             elif req.operation == 'start':
@@ -184,9 +189,13 @@ class BoundedRuntime:
                 s['tokens'] += reserve
                 self.save(s)  # Reservation survives provider errors and restarts.
                 try:
+                    worker = worker_for(s)
+                    if worker is not None:
+                        self.event(s, 'worker_assignment', worker=worker,
+                                   action=s['plan'][s['phase']])
                     with span('python.bounded_agent.model', stage='llm'):
-                        action, used = await asyncio.wait_for(self.model.propose(
-                            s['strategy'], s['plan'], copy.deepcopy(s['memory']), reserve),
+                        action, used = await asyncio.wait_for(
+                            propose(self.model, s, reserve),
                             timeout=self.policy['bounded']['call_timeout_seconds'])
                     if type(used) is not int or not 0 <= used <= reserve:
                         raise ValueError('invalid_usage')

@@ -1,0 +1,6 @@
+{
+  "description": "R42 disputes a charge after an outage. Findings change further investigation; one supervisor must reconcile evidence before a refund recommendation reaches human approval.",
+  "ticket_type": "multi-step refund",
+  "ratings": {"interdependence": 2, "verification": 2, "ordered": 0, "independent": 0, "handoff": 0},
+  "expected_pattern": "supervisor-worker"
+}

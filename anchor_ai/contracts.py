@@ -165,3 +165,10 @@ class ReviewIdentity(BaseModel):
     tenant_id: int = Field(gt=0)
     reviewer_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     role: Literal['refund_reviewer', 'support_reader']
+
+
+class OrchestrationFlow(BaseModel):
+    """Internal routing snapshot; never accepted from a customer request."""
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    pattern: Literal['single-agent', 'supervisor-worker']
+    workers: dict[str, str] = Field(default_factory=dict)

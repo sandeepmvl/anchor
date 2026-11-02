@@ -1,0 +1,19 @@
+version: 1
+routes:
+  single-lookup: single-agent
+  multi-step refund: supervisor-worker
+workers:
+  retrieve: technical
+  lookup_order: billing
+  check_refund: refund
+  issue_refund: refund
+rubric:
+  supervisor_threshold: 9
+  supervisor-worker:
+    interdependence: 3
+    verification: 3
+  sequential:
+    ordered: 4
+  parallel:
+    independent: 4
+  network/handoff: {handoff: 4}

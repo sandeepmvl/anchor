@@ -1,0 +1,6 @@
+{
+  "description": "Look up the published refund policy and return it. No specialist coordination or ownership transfer is required.",
+  "ticket_type": "single-lookup",
+  "ratings": {"interdependence": 0, "verification": 0, "ordered": 0, "independent": 0, "handoff": 0},
+  "expected_pattern": "single-agent"
+}
