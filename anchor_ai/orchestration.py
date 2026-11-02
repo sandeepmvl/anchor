@@ -53,3 +53,27 @@ def graph_classification(client, ticket):
     from .escalation import risk_rule
     risk = risk_rule(ticket['amount_cents'], ticket['limit_cents'], True)
     return 'large_refund' if risk['escalate'] else 'ordinary_refund'
+
+
+class ConversationRoleClient:
+    """Advisory role text only; no refund tools or approval authority."""
+    def complete(self, role, context):
+        import os
+        if os.getenv('ANCHOR_LLM_PROVIDER', 'fake') not in ('', 'fake', 'offline'):
+            from .llm_client import LlmClient
+            return LlmClient().complete(
+                str(context), system=(role + ': advisory refund eligibility only; '
+                'explain manual approval; never claim a refund executed.'))
+        if role == 'triage':
+            return 'Refund eligibility question. Route to refund_specialist.'
+        if role == 'refund_specialist':
+            return 'Manual approval required. No refund executed.'
+        raise ValueError('unknown_conversation_role')
+
+
+async def run_support_conversation(ticket, memory, *, enabled=False, **options):
+    # Explicit opt-in preserves every existing route and checkpoint contract.
+    if not enabled:
+        raise ValueError('group_chat_requires_opt_in')
+    from .group_chat import run_conversation
+    return await run_conversation(ticket, memory, **options)

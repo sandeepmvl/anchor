@@ -26,3 +26,6 @@ langgraph-checkpoint-sqlite>=3,<4
 
 # Query engines delegate retrieval and generation to Anchor's existing boundaries.
 llama-index-core>=0.14,<0.15
+
+# Current AutoGen AgentChat teams; not the historical pyautogen API.
+autogen-agentchat>=0.7,<0.8

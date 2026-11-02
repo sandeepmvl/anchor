@@ -165,3 +165,35 @@ class MemoryStore:
     def close(self):
         self.working.clear()
         self.db.close()
+
+
+class RailsAgentMemory:
+    """Credential-scoped handoff memory; transport may be injected by a lab."""
+    def __init__(self, token, *, base_url='http://127.0.0.1:3000', request=None):
+        self.token = token
+        self.base_url = base_url
+        self.request = request
+
+    def _call(self, method, payload):
+        import httpx
+        headers = {'Authorization': 'Bearer ' + self.token}
+        if self.request is not None:
+            return self.request(method, payload, headers)
+        with httpx.Client(base_url=self.base_url, timeout=5) as client:
+            options = {'params': payload} if method == 'GET' else {'json': payload}
+            response = client.request(method, '/api/agent_memories',
+                                      headers=headers, **options)
+            response.raise_for_status()
+            return response.json()
+
+    def load(self, conversation_id):
+        if type(conversation_id) is not int or conversation_id <= 0:
+            raise ValueError('invalid_conversation')
+        return self._call('GET', {'conversation_id': conversation_id})['memories']
+
+    def save(self, conversation_id, run_key, summary):
+        if type(conversation_id) is not int or conversation_id <= 0:
+            raise ValueError('invalid_conversation')
+        return self._call('POST', {'conversation_id': conversation_id,
+                                  'run_key': run_key,
+                                  'summary': redact_memory(summary)})

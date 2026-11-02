@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -168,7 +169,14 @@ def test_golden_gate_and_nonzero_exit_on_regression(tmp_path):
     dataset['chunks'][0]['text'] = 'zzzzunrelated'
     path = tmp_path / 'regression.json'
     path.write_text(json.dumps(dataset))
+    # Bound fresh numerical-library thread pools in the command-line process.
+    # Inherit the remaining environment and retain the real gate and deadline.
+    env = dict(os.environ)
+    for name in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS',
+                 'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS', 'NUMEXPR_NUM_THREADS'):
+        env[name] = '1'
     process = subprocess.run([sys.executable, '-m', 'eval.retrieval_gate', str(path)],
-                             cwd=ROOT, capture_output=True, text=True, timeout=8)
+                             cwd=ROOT, capture_output=True, text=True, timeout=8,
+                             env=env)
     assert process.returncode != 0
     assert 'retrieval_regression' in process.stderr
