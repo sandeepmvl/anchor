@@ -51,6 +51,9 @@ def require_safe_customer(value):
 
 @asynccontextmanager
 async def lifespan(application):
+    if os.environ.get('ANCHOR_DEPLOYMENT_CONFIG'):
+        from ops.deploy.validate_manifest import selected_route
+        selected_route(require_secret=True)
     from eval.eval_endpoint import ReleaseRuntime
     from anchor_ai.tools import registry_for
     from anchor_ai.mcp import McpClient
@@ -158,7 +161,12 @@ async def infer(body: InferRequest, request: Request,
     message = require_safe_customer(body.message)
     item.set(stage='provider')
     try:
-        return await model_call(LlmClient().complete_result, message)
+        if os.environ.get('ANCHOR_DEPLOYMENT_CONFIG'):
+            from ops.deploy.validate_manifest import inference_client
+            client = inference_client()
+        else:
+            client = LlmClient()
+        return await model_call(client.complete_result, message)
     except ProviderError as error:
         item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
@@ -408,8 +416,38 @@ from anchor_ai.schemas import ReleaseRagRequest, ReleaseRagResponse
 
 @app.get('/healthz')
 def healthz():
+    # Validate deployment policy before the legacy retrieval-only readiness path.
+    if os.environ.get('ANCHOR_DEPLOYMENT_CONFIG'):
+        from ops.deploy.validate_manifest import selected_route
+        try:
+            deployment_route = selected_route(require_secret=True)
+        except ValueError:
+            raise HTTPException(status_code=503, detail='deployment_not_ready') from None
+        if not hasattr(app.state, 'rag_release_runtime'):
+            raise HTTPException(status_code=503, detail='retrieval_not_ready')
+        return {'ready': True, 'deployment_route': deployment_route['name'],
+                'provider': deployment_route['provider']}
+    # Deployment readiness must validate routing even when called directly.
+    if os.environ.get('ANCHOR_DEPLOYMENT_CONFIG'):
+        from ops.deploy.validate_manifest import selected_route
+        try:
+            route = selected_route(require_secret=True)
+        except ValueError:
+            raise HTTPException(status_code=503, detail='deployment_not_ready') from None
+        if not hasattr(app.state, 'rag_release_runtime'):
+            raise HTTPException(status_code=503, detail='retrieval_not_ready')
+        return {'ready': True, 'deployment_route': route['name'],
+                'provider': route['provider']}
     if not hasattr(app.state, 'rag_release_runtime'):
         raise HTTPException(status_code=503, detail='retrieval_not_ready')
+    if os.environ.get('ANCHOR_DEPLOYMENT_CONFIG'):
+        from ops.deploy.validate_manifest import selected_route
+        try:
+            route = selected_route(require_secret=True)
+        except ValueError:
+            raise HTTPException(status_code=503, detail='deployment_not_ready') from None
+        return {'ready': True, 'deployment_route': route['name'],
+                'provider': route['provider']}
     return {'ready': True}
 
 

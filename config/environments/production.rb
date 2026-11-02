@@ -53,6 +53,11 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = nil
 
+  # TLS terminates outside this single-host rehearsal. Live deployments opt in.
+  config.assume_ssl = ENV["ANCHOR_TLS_TERMINATED"] == "1"
+  config.force_ssl = ENV["ANCHOR_TLS_TERMINATED"] == "1"
+  config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+
   # Ignore bad email addresses and do not raise email delivery errors.
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false

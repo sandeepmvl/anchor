@@ -1,4 +1,17 @@
 fixture: true
+# Deployment rehearsal policy; existing resilience policies remain unchanged.
+deployment:
+  default: fake
+  routes:
+    fake:
+      enabled: true
+      provider: offline
+    hosted:
+      enabled: false
+      provider: openai
+    self_hosted:
+      enabled: false
+      provider: self_hosted
 # Release routing is opt-in through ops/deploy/self_hosted_release.py.
 # Existing defaults and their regression contracts remain unchanged.
 sdk_retries: 0

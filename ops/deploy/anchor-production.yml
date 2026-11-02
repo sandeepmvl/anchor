@@ -1,0 +1,13 @@
+services:
+  rails:
+    deploy:
+      replicas: 1
+  ai-runtime:
+    environment:
+      ANCHOR_DEPLOYMENT_CONFIG: config/provider_routing.yml
+      ANCHOR_DEPLOY_ROUTE: ${ANCHOR_DEPLOY_ROUTE:-fake}
+    deploy:
+      replicas: 2
+  worker:
+    deploy:
+      replicas: 1

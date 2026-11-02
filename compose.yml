@@ -1,0 +1,90 @@
+name: anchor
+x-rails-environment: &rails-environment
+  RAILS_ENV: production
+  DATABASE_URL: sqlite3:/rails/storage/production.sqlite3
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE:?supply SECRET_KEY_BASE}
+  ANCHOR_AI_SECRET: ${ANCHOR_AI_SECRET:?supply ANCHOR_AI_SECRET}
+  ANCHOR_AI_URL: http://ai-runtime:8000
+  ANCHOR_AI_BASE_URL: http://ai-runtime:8000
+  AI_RUNTIME_URL: http://ai-runtime:8000
+  ANCHOR_LLM_PROVIDER: offline
+services:
+  database:
+    image: anchor-ai:lesson3754
+    build:
+      context: .
+      target: ai-runtime
+    profiles: [offline-production]
+    user: '0:0'
+    command: [python, -c, 'import sqlite3,time,os; os.makedirs("/data",exist_ok=True); sqlite3.connect("/data/production.sqlite3").close(); os.chown("/data",1000,1000); os.chown("/data/production.sqlite3",1000,1000); time.sleep(2147483647)']
+    volumes: [storage:/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD, python, -c, 'import sqlite3; sqlite3.connect("file:/data/production.sqlite3?mode=rw",uri=True).execute("SELECT 1").fetchone()']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  ai-runtime:
+    image: anchor-ai:lesson3754
+    build:
+      context: .
+      target: ai-runtime
+    profiles: [offline-production]
+    environment:
+      ANCHOR_AI_SECRET: ${ANCHOR_AI_SECRET:?supply ANCHOR_AI_SECRET}
+      ANCHOR_DEPLOYMENT_CONFIG: config/provider_routing.yml
+      ANCHOR_DEPLOY_ROUTE: fake
+      ANCHOR_LLM_PROVIDER: offline
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz",timeout=2).read()']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  rails:
+    image: anchor-rails:lesson3754
+    build:
+      context: .
+      target: rails-runtime
+    profiles: [offline-production]
+    environment: *rails-environment
+    command: [./bin/rails, server, -b, 0.0.0.0, -p, '3000']
+    ports: ['127.0.0.1:3000:3000']
+    networks: [private, edge]
+    volumes: [storage:/rails/storage]
+    depends_on:
+      database: {condition: service_healthy}
+      ai-runtime: {condition: service_healthy}
+    healthcheck:
+      test: [CMD-SHELL, 'curl --fail --silent http://127.0.0.1:3000/up && ./bin/rails runner "ActiveRecord::Base.connection.execute(%q{SELECT 1}); raise unless ActiveRecord::Base.connection.table_exists?(:solid_queue_jobs)"']
+      interval: 15s
+      timeout: 10s
+      retries: 12
+  worker:
+    image: anchor-rails:lesson3754
+    build:
+      context: .
+      target: rails-runtime
+    profiles: [offline-production]
+    environment: *rails-environment
+    command: [./bin/jobs]
+    networks: [private]
+    volumes: [storage:/rails/storage]
+    depends_on:
+      rails: {condition: service_healthy}
+      ai-runtime: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, ./bin/rails, runner, 'raise unless SolidQueue::Process.where("last_heartbeat_at > ?", 60.seconds.ago).exists?']
+      interval: 15s
+      timeout: 10s
+      retries: 12
+networks:
+  private:
+    internal: true
+  edge: {}
+volumes:
+  storage: {}
