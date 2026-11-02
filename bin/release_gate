@@ -26,6 +26,7 @@ commands = [
   [python, "eval/rag_gate.py"],
   [python, "eval/agent_gate.py"],
   [python, "eval/multi_agent_gate.py"],
+  [python, "-m", "eval.redteam_gate", "--release"],
   [RbConfig.ruby, "bin/redteam_harness.rb", "--suite", "full", "--target", "hardened_release"],
   [python, "-m", "labs.security_hardening.milestone", "--release"],
   [python, "-m", "eval.release_gate", "decide"]
@@ -37,6 +38,11 @@ commands.each do |command|
     warn "release_gate: BLOCKED"
     exit 1
   end
+end
+
+if ENV["ANCHOR_PRODUCTION_LAUNCH"] == "1"
+  exit 1 unless system(python, "-c",
+    "from eval.release_gate import manifest, require_launch_evidence; require_launch_evidence(manifest())")
 end
 
 puts "release_gate: PASS — accumulated product gates and consolidated evaluation passed"

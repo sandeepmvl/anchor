@@ -100,6 +100,8 @@ jobs:
       - run: python -m pytest -q anchor_ai/tests/test_failover_budget_incident.py
       - run: python eval/regression_gate.py --incident-only
       - run: bin/rails db:prepare
+      - name: Launch permission, isolation, quota, redaction, tool and handoff evidence
+        run: ruby test/integration/production_launch_test.rb --deployed
       - run: bin/rails test
       - run: python -m pytest -q anchor_ai/tests
       - name: Security harness offline integration

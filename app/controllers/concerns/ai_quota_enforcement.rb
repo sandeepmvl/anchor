@@ -38,6 +38,8 @@ module AiQuotaEnforcement
 
   def deny_ai_quota(error)
     response.set_header('Retry-After', error.retry_after.to_s) if error.retry_after
+    # A diagnostic decision label carries no identity or reusable spending token.
+    response.set_header('X-Anchor-Quota-Decision', 'denied')
     render json: { error: error.code }, status: error.status
   end
 

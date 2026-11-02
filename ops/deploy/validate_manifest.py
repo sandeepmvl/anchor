@@ -44,6 +44,18 @@ def inference_client():
     return LlmClient(provider=route['provider'])
 
 
+def launch_policy(manifest):
+    launch = manifest.get('x-anchor-launch', {})
+    require(launch.get('entrypoint') == 'bin/deploy', 'launch entrypoint missing')
+    require(launch.get('production_evidence') == 'required', 'production evidence must be required')
+    require(set(launch.get('independent_versions', [])) == {'prompt', 'model', 'index'},
+            'independent release versions missing')
+    require(set(launch.get('required_controls', [])) == {
+        'tenancy', 'auth', 'quotas', 'redaction', 'guarded_tools', 'tracing',
+        'rollback', 'backup_restore', 'kill_switch'}, 'launch controls missing')
+    return launch
+
+
 def release_gate():
     raise ValueError('release refused: container and live-provider evidence missing')
 
@@ -81,6 +93,7 @@ def render(environ=None):
 
 
 def validate(manifest):
+    launch_policy(manifest)
     services = manifest.get('services', {})
     require(set(services) == {'rails', 'ai-runtime', 'database', 'worker'},
             'required services missing')

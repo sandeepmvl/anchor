@@ -195,7 +195,7 @@ def markdown(report):
     return '\n'.join(lines)
 
 
-async def run():
+async def run(report_path='ops/load/benchmark_report.md'):
     from ops.load.batch_throughput import spike_batch_report
     c = configuration()
     ramp = [await band(n, c) for n in (1, 4, 16, 32)]
@@ -205,10 +205,25 @@ async def run():
     report = dict(execution_mode='offline', bands=ramp + [throttled, timed, admitted],
                   first_sampled_knee=first_knee(ramp, c), batch=await spike_batch_report(),
                   not_verified=NOT_VERIFIED)
-    Path('ops/load/benchmark_report.md').write_text(markdown(report))
+    destination = Path(report_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(markdown(report))
     print(json.dumps(report, indent=2))
     print('Anchor surge capacity report: worker queue wait and fake-provider 429s are separate; '
           'batching and tenant admission evidence recorded. Production capacity not verified.')
+    return report
+
+
+async def production_rehearsal(target):
+    """Resolve the production alias only to the existing in-process benchmark."""
+    if target != 'production' or os.getenv('ANCHOR_LOCUST') == '1':
+        raise ValueError('offline rehearsal target required')
+    print('Target production resolved to offline ASGI rehearsal; synthetic tenants 1 and 2 only.')
+    report = await run(report_path='.git/anchor-launch/benchmark_report.md')
+    output = Path('.git/anchor-launch/load.json')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(dict(report, target='offline-asgi-rehearsal',
+                                     deployment_approved=False), indent=2))
     return report
 
 

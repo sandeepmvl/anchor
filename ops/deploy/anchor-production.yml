@@ -1,3 +1,10 @@
+x-anchor-launch:
+  entrypoint: bin/deploy
+  offline_target: isolated-production-topology-rehearsal
+  production_evidence: required
+  readiness_review: ops/runbooks/production_launch.md
+  independent_versions: [prompt, model, index]
+  required_controls: [tenancy, auth, quotas, redaction, guarded_tools, tracing, rollback, backup_restore, kill_switch]
 services:
   rails:
     deploy:

@@ -135,6 +135,14 @@ def decide(bundle, expected, production=True, now=None, configuration=None):
     return {'passed': not errors, 'errors': sorted(set(errors)), 'rows': rows}
 
 
+def require_launch_evidence(expected, evidence=None):
+    """Launch requires full production evaluation, never sample or smoke evidence."""
+    bundle = require_evidence(expected, evidence=evidence, offline=False)
+    if bundle.get('tier') != 'full':
+        raise ValueError('full_launch_evaluation_required')
+    return bundle
+
+
 def require_evidence(expected, evidence=None, offline=False):
     path = evidence or os.environ.get('ANCHOR_EVAL_EVIDENCE')
     if not path:

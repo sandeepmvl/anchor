@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Coordinate Anchor launch checks; rehearsal receipts are not deployment evidence."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+NOT_VERIFIED = [
+    'container deployment and zero downtime', 'live authentication and tenant traffic',
+    'full accumulated Rails/Python CI and live judges', 'live retrieval and injection gates',
+    'production capacity and distributed trace export',
+    'deployed rollback, backup/restore and execution-time kill switch',
+    'named production approval and signed release tag',
+]
+
+
+def identity():
+    files = ['ops/deploy/anchor-production.yml', 'ops/deploy/validate_manifest.py',
+             'bin/deploy', 'bin/release_gate']
+    hashes = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in files}
+    commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
+                            capture_output=True, text=True)
+    hashes['commit'] = commit.stdout.strip() if commit.returncode == 0 else 'uncommitted'
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+
+
+def offline_commands():
+    return [
+        [sys.executable, 'ops/deploy/validate_manifest.py'],
+        [sys.executable, '-m', 'pytest', '-q',
+         'anchor_ai/tests/test_production_deploy_gate.py'],
+        ['ruby', 'test/integration/production_launch_test.rb'],
+        [sys.executable, '-m', 'eval.release_gate', 'smoke'],
+    ]
+
+
+def run_checks(commands, runner=subprocess.run):
+    results = []
+    for command in commands:
+        result = runner(command, cwd=ROOT, check=False)
+        results.append({'command': command, 'passed': result.returncode == 0})
+        if result.returncode:
+            raise ValueError('candidate gate failed: ' + ' '.join(command))
+    return results
+
+
+def atomic_save(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+        json.dump(value, stream, indent=2, allow_nan=False)
+        temporary = stream.name
+    os.replace(temporary, path)
+
+
+def promote_rehearsal(path, candidate, check):
+    """Run every check before touching the current rehearsal pointer."""
+    path = Path(path)
+    previous = json.loads(path.read_text()) if path.exists() else None
+    checks = check()
+    receipt = dict(scope='offline-rehearsal', release=candidate,
+                   previous_release=previous['release'] if previous else None,
+                   checks=checks, deployment_approved=False,
+                   not_verified=NOT_VERIFIED)
+    atomic_save(path, receipt)
+    return receipt
+
+
+def production():
+    from ops.deploy.validate_manifest import release_gate, render, validate
+    validate(render(os.environ))
+    environment = dict(os.environ, ANCHOR_PRODUCTION_LAUNCH='1')
+    subprocess.run(['ruby', 'bin/release_gate'], cwd=ROOT, env=environment, check=True)
+    # Operator-authored JSON cannot prove infrastructure readiness.
+    release_gate()
+    raise ValueError('production promotion adapter unavailable')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('target', choices=['production'])
+    parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--reject-candidate', action='store_true')
+    args = parser.parse_args()
+    if not args.offline:
+        if args.reject_candidate:
+            parser.error('--reject-candidate is rehearsal-only')
+        production()
+        return
+    path = ROOT / '.git/anchor-launch/rehearsal.json'
+    before = path.read_bytes() if path.exists() else None
+
+    def checks():
+        results = run_checks(offline_commands())
+        if args.reject_candidate:
+            raise ValueError('deliberate candidate rejection')
+        return results
+
+    try:
+        receipt = promote_rehearsal(path, identity(), checks)
+    except ValueError as error:
+        if not args.reject_candidate or str(error) != 'deliberate candidate rejection':
+            raise
+        after = path.read_bytes() if path.exists() else None
+        if before is None or after != before:
+            raise ValueError('prior rehearsal release was not preserved')
+        print('Rejected candidate; prior rehearsal release remains available. No live rollback verified.')
+        return
+    print(json.dumps(receipt, indent=2))
+    print('Anchor: the same multi-tenant ticket workload now has a single gated rehearsal workflow, '
+          'explicit launch evidence and a retained prior rehearsal release. '
+          'Production deployment and live rollback NOT verified. Load evidence is collected separately.')
+
+
+if __name__ == '__main__':
+    main()
