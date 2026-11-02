@@ -13,3 +13,16 @@ embeddings:
       model: voyage-3.5
       revision: anchor-voyage-1024-v1
       dimensions: 1024
+
+# Chunking consumes normalized document text, not original HTML bytes.
+# The semantic inspection fake is separate from persisted embedding providers.
+chunking:
+  default_strategy: sentence_window
+  strategies:
+    fixed_size: {size: 100, overlap: 20}
+    recursive: {size: 100, overlap: 20}
+    semantic: {percentile: 75}
+    sentence_window: {window: 1}
+    hierarchical: {parent_size: 400, child_size: 80, child_overlap: 10}
+    structural: {max_chars: 4000}
+  context_prefix: false
