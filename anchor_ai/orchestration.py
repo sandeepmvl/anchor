@@ -1,3 +1,11 @@
+async def run_native_support_turn(agent, scope, message, *, enabled=False,
+                                  previous_response_id=None, run=None):
+    if not enabled:
+        raise ValueError('native_agent_requires_opt_in')
+    return await agent.turn(scope, message,
+                            previous_response_id=previous_response_id, run=run)
+
+
 import copy
 from pathlib import Path
 

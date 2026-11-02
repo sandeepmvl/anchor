@@ -1,3 +1,77 @@
+NATIVE_CAPABILITIES = frozenset({'responses', 'function_tools', 'stored_history'})
+
+
+class NativeReplayProvider:
+    name = 'fake'
+    capabilities = NATIVE_CAPABILITIES
+
+    def __init__(self):
+        import copy
+        self.records = json.loads((Path(__file__).parent / 'tests/fixtures/native_agent_responses.json').read_text())
+        self.responses = {}
+        self.requests = []
+        self.copy = copy.deepcopy
+
+    async def create(self, payload):
+        self.requests.append(self.copy(payload))
+        if payload.get('store') is not True:
+            raise ValueError('native_storage_required')
+        previous = payload.get('previous_response_id')
+        if previous and previous not in self.responses:
+            raise ValueError('native_response_unavailable')
+        history = self.copy(self.responses[previous]['history']) if previous else []
+        items = payload['input']
+        if not previous:
+            if items != self.records['initial_input']:
+                raise ValueError('native_replay_miss')
+            output = self.copy(self.records['initial_output'])
+        elif all(item.get('type') == 'function_call_output' for item in items):
+            pending = [item['call_id'] for item in history if item.get('type') == 'function_call']
+            if [item['call_id'] for item in items] != pending[-len(items):]:
+                raise ValueError('native_tool_result_mismatch')
+            output = self.copy(self.records['answer_output'])
+        else:
+            if items != self.records['followup_input']:
+                raise ValueError('native_replay_miss')
+            if not any(item.get('type') == 'function_call_output' for item in history):
+                raise ValueError('native_missing_provider_history')
+            output = self.copy(self.records['followup_output'])
+        response_id = 'offline_response_' + str(len(self.responses) + 1)
+        self.responses[response_id] = {'history': history + self.copy(items) + output}
+        return {'id': response_id, 'output': self.copy(output)}
+
+
+class NativeOpenAIProvider:
+    name = 'openai'
+    capabilities = NATIVE_CAPABILITIES
+
+    async def create(self, payload):
+        provider = LiveProvider()
+        try:
+            async with provider.client() as client:
+                response = await client.post(
+                    'https://api.openai.com/v1/responses',
+                    headers={'Authorization': 'Bearer ' + provider.key()},
+                    json=payload, timeout=httpx.Timeout(30, connect=2))
+                if response.status_code != 200:
+                    raise classify(response)
+                return response.json()
+        except httpx.TimeoutException:
+            raise ProviderError('provider_timeout') from None
+        except httpx.TransportError:
+            raise ProviderError('provider_transport_error') from None
+
+
+def configured_native_provider():
+    mode = os.environ.get('PROVIDER', 'fake')
+    if mode == 'fake':
+        return NativeReplayProvider()
+    if mode == 'openai':
+        return NativeOpenAIProvider()
+    raise ValueError('unsupported_native_provider')
+
+
+# Existing provider interfaces below remain available to earlier lessons.
 import asyncio
 import json
 import math

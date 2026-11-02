@@ -1,3 +1,50 @@
+class NativeSessionStore:
+    """Local authorization metadata, never provider-held conversation history."""
+    def __init__(self, path):
+        self.db = sqlite3.connect(path, timeout=2, isolation_level=None)
+        self.db.executescript('''
+        CREATE TABLE IF NOT EXISTS native_response_bindings (
+          provider TEXT NOT NULL, response_id TEXT NOT NULL,
+          tenant_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL,
+          PRIMARY KEY(provider,response_id));
+        CREATE TABLE IF NOT EXISTS native_action_claims (
+          tenant_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL,
+          action_hash TEXT NOT NULL,
+          PRIMARY KEY(tenant_id,conversation_id,action_hash));
+        ''')
+
+    def authorize(self, provider, response_id, scope):
+        row = self.db.execute('''SELECT tenant_id,conversation_id
+          FROM native_response_bindings WHERE provider=? AND response_id=?''',
+          (provider, response_id)).fetchone()
+        if row != (scope.tenant_id, scope.conversation_id):
+            raise ValueError('native_session_scope_mismatch')
+
+    def remember(self, provider, response_id, scope):
+        if not isinstance(response_id, str) or not response_id:
+            raise ValueError('invalid_native_response_id')
+        self.db.execute('''INSERT OR IGNORE INTO native_response_bindings
+          VALUES (?,?,?,?)''',
+          (provider, response_id, scope.tenant_id, scope.conversation_id))
+        self.authorize(provider, response_id, scope)
+
+    def claim(self, scope, call, tool):
+        import hashlib
+        raw = json.loads(call.arguments) if isinstance(call.arguments, str) else call.arguments
+        arguments = tool.arguments.model_validate(raw).model_dump(mode='json')
+        identity = json.dumps([call.name, arguments], sort_keys=True, separators=(',', ':'))
+        digest = hashlib.sha256(identity.encode()).hexdigest()
+        try:
+            self.db.execute('INSERT INTO native_action_claims VALUES (?,?,?)',
+                            (scope.tenant_id, scope.conversation_id, digest))
+        except sqlite3.IntegrityError:
+            raise ValueError('native_duplicate_effect') from None
+
+    def close(self):
+        self.db.close()
+
+
+# Existing document, memory and escalation storage remains unchanged.
 import json
 import sqlite3
 from pathlib import Path

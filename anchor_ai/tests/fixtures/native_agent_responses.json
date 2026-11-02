@@ -1,0 +1,26 @@
+{
+  "initial_input": [
+    {"role": "user", "content": "For ticket 456, look up order A100."}
+  ],
+  "followup_input": [
+    {"role": "user", "content": "Which order did we discuss, and what was its status?"}
+  ],
+  "initial_output": [
+    {
+      "type": "function_call",
+      "call_id": "lookup_1",
+      "name": "lookup_order",
+      "arguments": "{\"order_id\":\"A100\"}"
+    }
+  ],
+  "answer_output": [
+    {"type": "message", "role": "assistant", "content": [
+      {"type": "output_text", "text": "Order A100 is delivered."}
+    ]}
+  ],
+  "followup_output": [
+    {"type": "message", "role": "assistant", "content": [
+      {"type": "output_text", "text": "We discussed order A100. Its status was delivered."}
+    ]}
+  ]
+}

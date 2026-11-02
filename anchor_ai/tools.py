@@ -1,3 +1,11 @@
+def native_definitions(registry):
+    """Keep existing schemas; local Pydantic validation remains authoritative."""
+    result = definitions(registry, 'responses')
+    for item in result:
+        item['strict'] = False
+    return result
+
+
 import asyncio
 import json
 import os
