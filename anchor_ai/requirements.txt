@@ -15,3 +15,6 @@ rank-bm25==0.2.2
 
 # MCP uses the constrained JSON-response Streamable HTTP tools subset.
 jsonschema>=4,<5
+
+# LCEL uses Anchor's existing model adapter, not a new provider SDK.
+langchain-core>=1.7,<1.8

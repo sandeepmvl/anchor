@@ -3,4 +3,5 @@ Rails.application.routes.draw do
   post "/chat", to: "chat#create"
   get "/stream_chat", to: "chat#show"
   post "/api/structured_replies", to: "api/structured_replies#create"
+  get "/api/prompt_versions/active", to: "api/prompt_versions#active"
 end

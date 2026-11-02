@@ -55,6 +55,33 @@ def contract_fields(contract):
                 max_tokens=contract.max_tokens)
 
 
+class ChainReplayProvider:
+    """Recorded chain candidates, returned through the existing HTTP adapter."""
+    def __init__(self, responses=None):
+        self.responses = list(responses) if responses is not None else [json.dumps({
+            'reply': 'I can help check the return policy for order 42.',
+            'status': 'needs_review'})]
+        if not self.responses:
+            raise ValueError('empty_chain_responses')
+        self.calls = 0
+
+    def key(self):
+        return 'offline-chain'
+
+    @asynccontextmanager
+    async def client(self):
+        def respond(request):
+            payload = json.loads(request.content)
+            candidate = self.responses[min(self.calls, len(self.responses) - 1)]
+            self.calls += 1
+            return httpx.Response(200, json={
+                'model': payload['model'],
+                'choices': [{'message': {'content': candidate}, 'finish_reason': 'stop'}],
+                'usage': {'prompt_tokens': 20, 'completion_tokens': 10, 'total_tokens': 30}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            yield client
+
+
 class PromptReplayProvider:
     """Authored chat fixtures; no network and no dependence on legacy fixture keys."""
     def key(self):
@@ -91,6 +118,27 @@ class LlmClient:
         self.sleep, self.clock = sleep, clock
         self.jitter = jitter or (lambda: random.uniform(0, 0.05))
         self.attempts = 0
+
+    async def complete_chain_text(self, text, contract):
+        """Consume an already rendered LCEL prompt; do not render_chat again."""
+        class ChainPrompt(str):
+            pass
+        prompt = ChainPrompt(text)
+        prompt.context_messages = [{'role': 'user', 'content': text}]
+        prompt.context_model = contract.model_id
+        prompt.context_temperature = contract.temperature
+        provider = self.provider
+        if isinstance(provider, (ReplayProvider, PromptReplayProvider)):
+            provider = ChainReplayProvider()
+        child = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
+        try:
+            with span('llm.chain', stage='provider', **contract_fields(contract)):
+                result = await child.complete_result(prompt, max_tokens=contract.max_tokens)
+            if result.finish_reason != 'stop':
+                raise InvalidModelOutput('incomplete_output')
+            return result.reply
+        finally:
+            self.attempts = child.attempts
 
     def embed(self, texts, input_type='document', *, provider=None, config=None,
               transport=None, api_key=None):
@@ -241,7 +289,7 @@ class LlmClient:
         self.last_error = ProviderError('provider_timeout', retryable=True)
         model = getattr(prompt, 'context_model',
                         contract.model_id if contract else os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'))
-        offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider, ContextReplayProvider))
+        offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider, ContextReplayProvider, ChainReplayProvider))
         with span('llm.call', stage='provider', request_model=model,
                   response_model=None, currency='USD', price_version=PRICE_VERSION,
                   cost_basis='offline_replay_estimate' if offline else 'published_price_estimate') as telemetry:
@@ -360,7 +408,6 @@ class LlmClient:
             with span('context.summary', stage='summary', summary_version=SUMMARY_VERSION,
                       summary_input_tokens=request_count(messages), summary_output_cap=limit):
                 child = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
-                # A prepared prompt passes complete messages without chat rendering.
                 source = PreparedPrompt('', type('Source', (), {'messages': messages})(), contract)
                 source.context_max_tokens = limit
                 result = await child.complete_result(source, max_tokens=limit)
@@ -370,7 +417,6 @@ class LlmClient:
         with span('context.assemble', stage='context', **contract_fields(contract)) as telemetry:
             assembly = await assemble(contract, str(prompt), history, state, summarize)
         prepared = PreparedPrompt(str(prompt), assembly, contract)
-        # Attach numeric metrics to this request, never to a shared provider.
         prepared.context_metrics = assembly.metrics
         return prepared, assembly, provider
 

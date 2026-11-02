@@ -416,3 +416,40 @@ async def release_rag(
     except ValueError:
         item.fail('retrieval_failed', 422)
         raise HTTPException(status_code=422, detail='retrieval_failed') from None
+
+
+from anchor_ai.chains import TicketResponse, run_ticket_chain
+from anchor_ai.prompts import RegistryLookupError
+from langchain_core.exceptions import OutputParserException
+
+
+@app.post('/v1/chain_replies', response_model=TicketResponse)
+async def chain_reply(
+    body: InferRequest,
+    request: Request,
+    x_anchor_secret: Annotated[str | None, Header()] = None,
+):
+    item = request.state.telemetry
+    item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
+    expected = os.environ.get('ANCHOR_AI_SECRET')
+    if not expected:
+        item.fail('service_not_configured', 503)
+        raise HTTPException(status_code=503, detail='service_not_configured')
+    if not hmac.compare_digest((x_anchor_secret or '').encode(), expected.encode()):
+        item.fail('service_auth_failed', 401)
+        raise HTTPException(status_code=401, detail='service_auth_failed')
+    if os.environ.get('ANCHOR_REPLY_PIPELINE') != 'lcel':
+        raise HTTPException(status_code=404, detail='pipeline_not_enabled')
+    item.set(stage='chain')
+    try:
+        return await run_ticket_chain(body.model_dump(), trace={
+            'request_id': item.record['request_id'], 'trace_id': item.record['trace_id']})
+    except RegistryLookupError:
+        item.fail('registry_lookup_failed', 503)
+        raise HTTPException(status_code=503, detail='registry_lookup_failed') from None
+    except (OutputParserException, InvalidModelOutput, ValueError):
+        item.fail('validation_failed', 422)
+        raise HTTPException(status_code=422, detail='validation_failed') from None
+    except ProviderError as error:
+        item.fail(error.code, error.status)
+        raise HTTPException(status_code=error.status, detail=error.detail()) from None
