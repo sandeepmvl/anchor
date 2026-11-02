@@ -1,0 +1,32 @@
+features:
+  - name: refund-tool formatting
+    freshness: stable
+    knowledge_volatility: 1
+    target: format
+    labels: missing
+    latency: flexible
+    request_cost: normal
+    maintenance: lean
+    residual_failure: false
+    evidence: Schema alignment fixes the illustrative recorded formatting failures.
+  - name: tone consistency
+    freshness: stable
+    knowledge_volatility: 1
+    target: tone
+    labels: ready
+    latency: tight
+    request_cost: pressure
+    maintenance: funded
+    residual_failure: true
+    evidence: Stable tone failures remain after prompt review; approved labels and separate evaluation cases are available.
+  - name: rare-policy Q&A
+    ticket: Does this tenant's rare exception policy cover my refund request?
+    freshness: current
+    knowledge_volatility: 1
+    target: knowledge
+    labels: missing
+    latency: flexible
+    request_cost: normal
+    maintenance: funded
+    residual_failure: true
+    evidence: The ticket needs current tenant policy evidence; the relevant policy is absent from context and changes frequently.

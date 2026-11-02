@@ -1,0 +1,24 @@
+version: 1
+methods: [prompt, RAG, fine-tune]
+tie_order: [prompt, RAG, fine-tune]
+knowledge_volatility_range: [1, 5]
+axes:
+  freshness:
+    current: [0, 4, 0]
+    stable: [1, 0, 2]
+  target:
+    format: [4, 0, 0]
+    tone: [1, 0, 4]
+    knowledge: [0, 4, 0]
+  labels:
+    missing: [2, 0, 0]
+    ready: [0, 0, 3]
+  latency:
+    flexible: [0, 0, 0]
+    tight: [1, 0, 1]
+  request_cost:
+    normal: [0, 0, 0]
+    pressure: [1, 0, 1]
+  maintenance:
+    lean: [2, 0, 0]
+    funded: [0, 1, 2]
