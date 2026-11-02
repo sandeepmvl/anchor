@@ -1,0 +1,15 @@
+{
+  "version": "rag-milestone-1",
+  "configuration": {"advanced_rag": true, "max_tool_calls": 2, "top_k": 2, "evidence_budget": 1600, "reranker": "offline-term-overlap-v1", "provider": "offline"},
+  "baseline": {"context_relevance": 1.0, "groundedness": 1.0, "answer_relevance": 1.0, "citation_support": 1.0},
+  "tolerance": {"context_relevance": 0.05, "groundedness": 0.0, "answer_relevance": 0.05, "citation_support": 0.0},
+  "chunks": [
+    {"id": 901, "tenant_id": 1, "generation_id": "milestone-1", "text": "Refund window policy: Refunds require review. Refund window is 30 days.", "follow_up": "refund approval policy"},
+    {"id": 902, "tenant_id": 1, "generation_id": "milestone-1", "text": "Refund approval policy: Refunds require review. Refund approval requires a receipt."},
+    {"id": 903, "tenant_id": 1, "generation_id": "milestone-1", "text": "Shipping delivery takes five days."}
+  ],
+  "tickets": [
+    {"id": "refund-window", "tenant_id": 1, "generation_id": "milestone-1", "question": "refund window policy", "required_ids": [901], "expected_calls": 2},
+    {"id": "refund-approval", "tenant_id": 1, "generation_id": "milestone-1", "question": "refund approval", "required_ids": [901, 902], "expected_calls": 2}
+  ]
+}

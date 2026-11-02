@@ -263,3 +263,84 @@ def published_agentic_rag_runtime(tenant_id, acquire_snapshot, dense_search,
         dense_search, sparse_search, emit=emit, **settings)
     return AgenticRuntime(bounded.retriever, policy=policy, emit=emit,
                           tenant_id=tenant_id)
+
+
+class ReleaseRetriever:
+    """Bounded composition shared by the flagged release path and its gate.
+
+    The injected search client performs I/O. Follow-up queries come from retrieved
+    evidence, not from the gate's expected trajectory or score labels.
+    """
+    def __init__(self, ticket, configuration, search):
+        self.ticket = ticket
+        self.configuration = configuration
+        self.search = search
+        self.trajectory = []
+        self.contexts = []
+
+    async def retrieve(self, question, top_k=3):
+        import re
+        cfg = self.configuration
+        limit = cfg['max_tool_calls'] if cfg['advanced_rag'] else 1
+        if type(limit) is not int or not 1 <= limit <= 8:
+            raise ValueError('invalid_tool_budget')
+        pending, seen, candidates = [question], set(), {}
+        calls = 0
+        while pending and calls < limit:
+            query = pending.pop(0)
+            if query in seen:
+                continue
+            seen.add(query)
+            hits = await self.search(query)
+            calls += 1
+            self.trajectory.append(dict(event='retrieve', query=query,
+                                        evidence_ids=[hit['id'] for hit in hits]))
+            for hit in hits:
+                if (hit['tenant_id'] != self.ticket['tenant_id'] or
+                        hit['generation_id'] != self.ticket['generation_id']):
+                    raise ValueError('release_scope_mismatch')
+                candidates[hit['id']] = hit
+                follow_up = hit.get('follow_up')
+                if cfg['advanced_rag'] and follow_up and follow_up not in seen:
+                    pending.append(follow_up)
+        words = set(re.findall(r'[a-z0-9]+', question.lower()))
+        ranked = list(candidates.values())
+        if cfg['advanced_rag']:
+            if cfg['reranker'] != 'offline-term-overlap-v1':
+                raise ValueError('unsupported_release_reranker')
+            ranked.sort(key=lambda hit: (-len(words & set(re.findall(
+                r'[a-z0-9]+', hit['text'].lower()))), hit['id']))
+            self.trajectory.append(dict(event='rerank', evidence_ids=[h['id'] for h in ranked]))
+        self.contexts = ranked[:top_k]
+        self.trajectory.append(dict(event='stop', outcome='budget' if pending else 'complete',
+                                    tool_calls=calls))
+        return dict(tenant_id=self.ticket['tenant_id'],
+                    generation_id=self.ticket['generation_id'], hits=self.contexts)
+
+
+async def answer_release(ticket, configuration, search, client=None):
+    """The gate calls this same flagged entry point; it does not replay answers."""
+    import os
+    if type(configuration['advanced_rag']) is not bool:
+        raise ValueError('invalid_release_flag')
+    if client is None:
+        if os.getenv('ANCHOR_LLM_PROVIDER', 'offline') == 'offline':
+            client = RecordedGenerationClient()
+        else:
+            from anchor_ai.llm_client import LlmClient
+            client = ExistingClientAdapter(LlmClient())
+    retriever = ReleaseRetriever(ticket, configuration, search)
+    runtime = RagRuntime(retriever, client,
+                         evidence_budget=configuration['evidence_budget'])
+    result = await runtime.answer(ticket['question'], configuration['top_k'],
+                                  request_id=ticket['id'], trace_id=ticket['id'])
+    # Capture the packed sources, not candidates discarded by the evidence budget.
+    sources = pack_evidence(retriever.contexts, configuration['evidence_budget'])['sources']
+    evidence = [dict(source, tenant_id=ticket['tenant_id'],
+                     generation_id=ticket['generation_id']) for source in sources]
+    return dict(id=ticket['id'], tenant_id=ticket['tenant_id'],
+                generation_id=ticket['generation_id'], question=ticket['question'],
+                category='release', answer=result['reply'], citations=result['citations'],
+                abstained=result['abstained'], evidence=evidence,
+                trajectory=retriever.trajectory,
+                pipeline='advanced' if configuration['advanced_rag'] else 'legacy')

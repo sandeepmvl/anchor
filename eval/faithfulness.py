@@ -156,3 +156,31 @@ def groundedness_dimension(report):
     if report.get('status') != 'scored' or report.get('score') is None:
         return {'groundedness': None}
     return {'groundedness': validate_score(report['score'])}
+
+
+def heuristic_support(payload):
+    """Lexical support fake: deliberately not an entailment or LLM judge."""
+    import re
+    if not isinstance(payload['answer'], str) or not valid_ids(payload['citations']):
+        raise ValueError('invalid_heuristic_payload')
+    evidence = {}
+    for chunk in payload['evidence']:
+        if (type(chunk['id']) is not int or chunk['id'] in evidence or
+                chunk['tenant_id'] != payload['tenant_id'] or
+                chunk['generation_id'] != payload['generation_id']):
+            raise ValueError('invalid_evidence_scope')
+        evidence[chunk['id']] = chunk['text']
+    citations = payload['citations']
+    if len(citations) != len(set(citations)):
+        raise ValueError('duplicate_citation')
+    sentences = [s.strip() for s in re.split(r'[.!?]+', payload['answer']) if s.strip()]
+    if not sentences:
+        raise ValueError('empty_answer')
+    citation_ok = bool(citations) and not (set(citations) - set(evidence))
+    cited_terms = set(re.findall(r'[a-z0-9]+', ' '.join(
+        evidence[i] for i in citations if i in evidence).lower()))
+    supported = [bool(re.findall(r'[a-z0-9]+', sentence.lower())) and
+                 set(re.findall(r'[a-z0-9]+', sentence.lower())) <= cited_terms
+                 for sentence in sentences]
+    score = sum(supported) / len(sentences) if citation_ok else 0.0
+    return dict(groundedness=score, citation_support=score)
