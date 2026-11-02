@@ -35,4 +35,31 @@ class PromptRegistryTest < ActiveSupport::TestCase
     contracts = %w[chat:v1 chat:v2].map { |version| PromptRegistry.resolve(version) }
     File.write(path, JSON.generate(contracts))
   end
+
+  test 'invalid registration reports errors without changing published data' do
+    PromptRegistry.resolve('chat:v1')
+    row = PromptVersion.find_by!(version: 'chat:v1')
+    snapshot = row.attributes
+    count = PromptVersion.count
+    invalid = PromptRegistry::V1.merge(temperature: nil)
+
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      PromptRegistry.publish('chat:v900', invalid)
+    end
+    assert error.record.errors.added?(:temperature, :blank)
+    assert_equal count, PromptVersion.count
+    assert_equal snapshot, row.reload.attributes
+    assert_not PromptVersion.exists?(version: 'chat:v900')
+    puts "Incomplete registration rejected: #{error.record.errors.full_messages.join(', ')}; no row inserted; published version unchanged"
+  end
+
+  test 'duplicate registration preserves count and immutable version' do
+    PromptRegistry.resolve('chat:v1')
+    row = PromptVersion.find_by!(version: 'chat:v1')
+    snapshot = row.attributes
+    count = PromptVersion.count
+    assert_raises(ArgumentError) { PromptRegistry.publish('chat:v1', PromptRegistry::V2) }
+    assert_equal count, PromptVersion.count
+    assert_equal snapshot, row.reload.attributes
+  end
 end
