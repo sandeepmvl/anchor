@@ -18,7 +18,7 @@ from anchor_ai.batching import (BatchEnvelope, BatchItem, BatchRuntime,
                                OfflineBatchProvider, Overloaded, Scheduler,
                                configuration)
 from anchor_ai.provider import offline_batch_provider
-from anchor_ai.observability import batch_measurement
+from anchor_ai.observability import batch_measurement, distribution
 
 
 def stream_payload(message):
@@ -75,21 +75,27 @@ async def measure(grouped):
     provider, events = offline_batch_provider(), []
     scheduler = Scheduler(provider, c, emit=lambda record: events.append(batch_measurement(record)))
     callers = asyncio.Semaphore(32)
+    latencies = []
     async def send(n):
         async with callers:
+            submitted = time.perf_counter()
             p = item(n)
             result = await scheduler.submit(p)
             assert result['embedding'] == list(hashlib.sha256(p.text.encode()).digest()[:8])
+            latencies.append((time.perf_counter() - submitted) * 1000)
     start = time.perf_counter()
     try:
-        await asyncio.gather(*(send(n) for n in range(64)))
+        outcomes = await asyncio.gather(*(send(n) for n in range(64)), return_exceptions=True)
+        failures = sum(isinstance(value, BaseException) for value in outcomes)
         elapsed = time.perf_counter() - start
         waits = sorted(v for event in events for v in event['queue_ms'])
         return {'mode': 'microbatched' if grouped else 'unbatched',
                 'inputs': 64, 'caller_concurrency': 32, 'provider_concurrency': 2,
                 'provider_calls': provider.calls, 'seconds': elapsed,
-                'inputs_per_second': 64 / elapsed,
-                'p95_queue_ms': waits[math.ceil(.95 * len(waits)) - 1],
+                'inputs_per_second': (64 - failures) / elapsed,
+                'completed': 64 - failures, 'failures': failures,
+                'successful_latency_ms': distribution(latencies),
+                'p95_queue_ms': waits[math.ceil(.95 * len(waits)) - 1] if waits else None,
                 'input_test_units': 64 * 3,
                 'evidence': 'synthetic_12ms_per_call_not_provider_benchmark'}
     finally:
@@ -155,6 +161,15 @@ async def product(mode):
         finally:
             await runtime.close()
             del app.state.batch_runtime
+
+
+async def spike_batch_report():
+    """Use the existing scheduler and HTTP batch endpoint with offline inference."""
+    before, after = await measure(False), await measure(True)
+    endpoint = await product('mixed')
+    return dict(unbatched=before, batched=after, endpoint=endpoint,
+                not_verified=['GPU throughput', 'production signed context',
+                              'real tokenizer limits', 'customer network latency'])
 
 
 async def main(mode):

@@ -1,3 +1,14 @@
+ticket_spike:
+  scope: benchmark_only
+  record_content: false
+  workers: 4
+  tenant_pending: 4
+  tenant_requests: 30
+  tenant_cost_units: 20
+  timeout_s: 2.0
+  p99_objective_ms: 100
+  queue_objective_ms: 20
+
 profiling:
   enabled: true
   samples: 20

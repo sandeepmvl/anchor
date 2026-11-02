@@ -55,6 +55,20 @@ async def profile_ticket(mode='rag', calls=1, trace_id=None):
     return result
 
 
+async def spike_profile(path, trace_id):
+    """Reuse profiling workloads, not production endpoint/auth contracts."""
+    if path not in {'/rag', '/bounded_agent'}:
+        raise ValueError('unknown_spike_path')
+    # chat with three bounded model calls is a local workflow timing fixture.
+    # It does not execute the production bounded-agent policy or its tools.
+    result = await profile_ticket('rag' if path == '/rag' else 'chat',
+                                  1 if path == '/rag' else 3, trace_id)
+    result['generation_ms'] = sum(s['inclusive_ms'] for s in result['spans']
+                                  if s['name'] == 'model')
+    result['adapter'] = 'offline_profile_workload_not_production_endpoint'
+    return result
+
+
 async def boundary_probe(traceparent, mode):
     """ASGI contract smoke used by Rails. No production endpoint/auth claims."""
     records = []

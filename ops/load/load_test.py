@@ -9,6 +9,7 @@ from anchor_ai.serving_benchmark import surge
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--ticket-spike', action='store_true')
     parser.add_argument('--concurrency', type=int, default=50)
     parser.add_argument('--backend', choices=['vllm'], default='vllm')
     parser.add_argument('--profile', choices=['default', 'tuned'])
@@ -17,6 +18,11 @@ def main():
     parser.add_argument('--sweep', action='store_true')
     parser.add_argument('--kv-profile', choices=['unsafe', 'bounded'])
     args = parser.parse_args()
+    if args.ticket_spike:
+        import asyncio
+        from ops.load.ticket_spike import run
+        asyncio.run(run())
+        return
     if args.kv_profile:
         from ops.load.kv_cache_dashboard import simulate
         print(json.dumps(simulate(args.kv_profile, args.concurrency), sort_keys=True))

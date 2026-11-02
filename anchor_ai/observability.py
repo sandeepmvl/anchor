@@ -933,6 +933,29 @@ def export_production_span(record):
         EXPORT_LOGGER.warning('telemetry_delivery_failed')
 
 
+def spike_measurement(record):
+    """Content-free per-ticket benchmark record; unknown stage waits stay None."""
+    keys = {'tenant_id', 'trace_id', 'started', 'outcome', 'latency_ms',
+            'queue_ms', 'generation_ms'}
+    outcomes = {'success', 'provider_429', 'timeout', 'admission_rejected',
+                'rate_rejected', 'cost_rejected', 'transport_or_contract_error'}
+    if (set(record) != keys or type(record['tenant_id']) is not int
+            or record['tenant_id'] not in {1, 2}
+            or not isinstance(record['trace_id'], str)
+            or not re.fullmatch('[0-9a-f]{32}', record['trace_id'])
+            or int(record['trace_id'], 16) == 0
+            or type(record['started']) is not int or record['started'] not in {0, 1}
+            or record['outcome'] not in outcomes):
+        raise ValueError('unsafe_spike_telemetry')
+    for key in ('latency_ms', 'queue_ms', 'generation_ms'):
+        value = record[key]
+        if value is None and key != 'latency_ms':
+            continue
+        if (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+            raise ValueError('unsafe_spike_telemetry')
+    return dict(record)
+
+
 def require_observability_evidence(evidence):
     """Offline fixtures cannot approve collector delivery or dashboard operation."""
     required = {'rails_http_trace', 'collector_delivery', 'dashboard_queries', 'pii_export_scan'}
