@@ -517,3 +517,7 @@ async def cited_rag(
         raise HTTPException(status_code=504, detail='retrieval_deadline') from None
     except ValueError:
         raise HTTPException(status_code=422, detail='cited_generation_rejected') from None
+
+
+from anchor_ai.vision import register_vision
+register_vision(app)

@@ -285,3 +285,15 @@ def trajectory_decision(*, kind, tool='none', expected_tool='none',
     for key in ('tenant_id', 'trace_id', 'span_id', 'parent_span_id'):
         result[key] = current.record.get(key)
     return result
+
+
+FIELDS.update({'vision_backend', 'vision_usage_basis'})
+ERRORS.update({'live_vision_not_verified', 'vision_context_rejected',
+               'vision_request_rejected', 'invalid_vision_output', 'vision_provider_rejected'})
+
+
+@contextmanager
+def vision_span():
+    with span('python.vision', stage='vision', vision_backend='offline',
+              vision_usage_basis='not_measured_offline') as item:
+        yield item

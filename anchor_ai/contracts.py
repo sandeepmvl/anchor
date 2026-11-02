@@ -225,7 +225,7 @@ def validate_specialist_handoff(context, trusted, *, boundary='dispatch'):
     import copy
     import re
     if boundary not in ('dispatch', 'resume'):
-        raise ValueError('invalid_handoff_boundary')
+        raise HandoffViolation('invalid_handoff_boundary')
     if not isinstance(context, dict) or not isinstance(trusted, dict):
         raise HandoffViolation('handoff_missing')
     for value in (trusted, context):
@@ -248,3 +248,9 @@ def validate_specialist_handoff(context, trusted, *, boundary='dispatch'):
     if changed:
         raise HandoffViolation('handoff_conflict', changed)
     return copy.deepcopy(context)
+
+
+class VisionRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    image_base64: str = Field(min_length=1, max_length=2800000)
+    ticket_text: str = Field(min_length=1, max_length=1800)

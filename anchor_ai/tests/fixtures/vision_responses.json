@@ -1,0 +1,12 @@
+{
+  "valid": {
+    "content": "{\"issue_type\":\"billing\",\"urgency\":\"high\",\"visible_error_code\":\"E42\",\"confidence\":0.72,\"evidence_regions\":[{\"x0\":0.1,\"y0\":0.1,\"x1\":0.9,\"y1\":0.7}]}"
+  },
+  "malformed": {
+    "content": "{\"issue_type\":\"billing\",\"urgency\":\"banana\",\"refund_approved\":true}"
+  },
+  "invalid_json": {"content": "not JSON"},
+  "refusal": {"content": "", "refusal": "refused"},
+  "truncated": {"content": "{}", "finish_reason": "length"},
+  "rejected": {"status": 400}
+}

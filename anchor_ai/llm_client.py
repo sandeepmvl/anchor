@@ -258,6 +258,35 @@ class LlmClient:
             raise InvalidModelOutput('incomplete_output')
         return triage
 
+    async def complete_vision(self, raw, ticket, cfg=None):
+        from anchor_ai.vision import settings, prepare_image, VisionPrompt, OfflineVisionProvider
+        from anchor_ai.schemas import IssueSummary
+        from pydantic import ValidationError
+        import base64
+        cfg = settings() if cfg is None else cfg
+        if cfg != settings():
+            raise ProviderError('live_vision_not_verified', status=503)
+        prepare_image(base64.b64encode(raw).decode(), cfg)
+        provider = self.provider
+        if isinstance(provider, (ReplayProvider, PromptReplayProvider)):
+            provider = OfflineVisionProvider()
+        if not isinstance(provider, OfflineVisionProvider):
+            raise ProviderError('live_vision_not_verified', status=503)
+        child = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
+        response_format = {'type': 'json_schema', 'json_schema': {
+            'name': 'issue_summary', 'strict': True, 'schema': IssueSummary.model_json_schema()}}
+        try:
+            result = await child.complete_result(VisionPrompt(raw, ticket, cfg),
+                max_tokens=cfg['max_output_tokens'], response_format=response_format)
+            if result.finish_reason != 'stop':
+                raise InvalidModelOutput('incomplete_output')
+            try:
+                return IssueSummary.model_validate_json(result.reply)
+            except ValidationError:
+                raise InvalidModelOutput('schema_violation') from None
+        finally:
+            self.attempts = child.attempts
+
     async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None,
                               response_format=None, contract=None):
         contract = selected_contract(prompt, contract)
@@ -290,6 +319,7 @@ class LlmClient:
         model = getattr(prompt, 'context_model',
                         contract.model_id if contract else os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'))
         offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider, ContextReplayProvider, ChainReplayProvider))
+        offline = offline or getattr(self.provider, 'vision_offline', False) is True
         with span('llm.call', stage='provider', request_model=model,
                   response_model=None, currency='USD', price_version=PRICE_VERSION,
                   cost_basis='offline_replay_estimate' if offline else 'published_price_estimate') as telemetry:

@@ -1,0 +1,9 @@
+provider: offline
+external_calls: false
+model: gpt-4o-mini
+max_body_bytes: 2900000
+max_encoded_chars: 2800000
+max_image_bytes: 2000000
+max_edge: 768
+max_pixels: 589824
+max_output_tokens: 512

@@ -301,3 +301,26 @@ class CitedRagEnvelope(BaseModel):
     cited_answer: dict[str, JsonValue]
     retrieved_chunk_ids: list[int]
     prompt_version: str = Field(min_length=1, max_length=100)
+
+
+class EvidenceRegion(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    x0: float = Field(ge=0, le=1, allow_inf_nan=False)
+    y0: float = Field(ge=0, le=1, allow_inf_nan=False)
+    x1: float = Field(ge=0, le=1, allow_inf_nan=False)
+    y1: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode='after')
+    def positive_area(self):
+        if self.x0 >= self.x1 or self.y0 >= self.y1:
+            raise ValueError('invalid_region')
+        return self
+
+
+class IssueSummary(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    issue_type: Literal['billing', 'unknown']
+    urgency: Literal['low', 'high']
+    visible_error_code: Literal['E42'] | None
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
+    evidence_regions: list[EvidenceRegion] = Field(min_length=1, max_length=4)
