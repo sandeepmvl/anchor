@@ -1,0 +1,9 @@
+{
+  "tenant_id": 1,
+  "conversation_id": 7,
+  "order_id": "A100",
+  "amount_cents": 500,
+  "limit_cents": 100,
+  "messages": ["Please refund A100. Contact alex@example.test."],
+  "evidence": ["Order delivered; refund eligible within the policy window."]
+}

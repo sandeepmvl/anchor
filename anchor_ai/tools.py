@@ -307,3 +307,38 @@ if __name__ == '__main__':
         inspect_registry()
     else:
         asyncio.run(demo(reverse='--reverse' in sys.argv))
+
+
+class DurableOfflineOrderBackend(MemoryOrderBackend):
+    """Fake provider ledger; a real provider must enforce the same key contract."""
+    def __init__(self, path):
+        super().__init__()
+        import sqlite3
+        self.path = path
+        with sqlite3.connect(path) as db:
+            db.execute('''CREATE TABLE IF NOT EXISTS graph_tool_results (
+                tenant_id INTEGER NOT NULL, action_key TEXT NOT NULL,
+                arguments TEXT NOT NULL, result TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, action_key))''')
+
+    async def issue_refund(self, *, scope, order_id, amount_cents, idempotency_key):
+        import sqlite3
+        if not idempotency_key:
+            raise ValueError('idempotency_required')
+        arguments = json.dumps([order_id, amount_cents])
+        with sqlite3.connect(self.path, timeout=5) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('''SELECT arguments,result FROM graph_tool_results
+                WHERE tenant_id=? AND action_key=?''',
+                (scope.tenant_id, idempotency_key)).fetchone()
+            if row:
+                if row[0] != arguments:
+                    raise ValueError('idempotency_conflict')
+                return json.loads(row[1])
+            if not self.rows[(scope.tenant_id, order_id)]['eligible']:
+                raise ValueError('refund_ineligible')
+            result = {'order_id': order_id, 'amount_cents': amount_cents, 'status': 'refunded'}
+            db.execute('INSERT INTO graph_tool_results VALUES (?,?,?,?)',
+                       (scope.tenant_id, idempotency_key, arguments, json.dumps(result)))
+            self.invocations.append(('issue_refund', scope.tenant_id, order_id))
+            return result

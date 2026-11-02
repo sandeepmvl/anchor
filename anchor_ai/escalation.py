@@ -197,3 +197,14 @@ class EscalationService:
                 (status, json.dumps(observation), json.dumps(redact(final)), time.time(), checkpoint_id))
             row = db.execute('SELECT * FROM escalations WHERE id=?', (checkpoint_id,)).fetchone()
             return {**public_record(row), 'deduplicated': False}
+
+
+def graph_handoff(ticket, classification):
+    from .pii import redact_graph
+    return redact_graph({
+        'order_id': ticket['order_id'], 'amount_cents': ticket['amount_cents'],
+        'classification': classification, 'messages': ticket['messages'],
+        'evidence': ticket['evidence'], 'plan_position': 'human_approval_checkpoint',
+        'remaining_budget': 4,
+        'decision_summary': 'Refund exceeds automatic limit; review exact pending action.',
+    })

@@ -106,3 +106,19 @@ def redact_memory(text):
     if not safe or finetuning_detected(safe):
         raise ValueError('memory_redaction_failed')
     return safe
+
+
+def redact_graph(value):
+    """Prepare JSON context before graph storage, logs, or export."""
+    if isinstance(value, str):
+        safe = redact_finetuning_text(value)
+        safe = re.sub(r'\+?\d[\d ()-]{8,}\d', '[REDACTED_PHONE]', safe)
+        return safe
+    if isinstance(value, list):
+        return [redact_graph(item) for item in value]
+    if isinstance(value, dict):
+        return {redact_graph(str(key)): redact_graph(item)
+                for key, item in value.items()}
+    if value is None or type(value) in (int, float, bool):
+        return value
+    raise ValueError('unsupported_graph_value')
