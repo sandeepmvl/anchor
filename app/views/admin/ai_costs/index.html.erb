@@ -1,4 +1,20 @@
 <h1>Anchor AI costs</h1>
+<section aria-label="Inference deployment comparison">
+  <h2>Which workloads might justify self-hosting?</h2>
+  <p>Export this organization's daily workload tokens, accounting costs and available latency aggregates.
+    No ticket text, customer identifiers or other organizations' records are included.</p>
+  <%= link_to 'Export deployment comparison usage', url_for(organization_id: params[:organization_id], window: @window, comparison: 'export', only_path: true) %>
+  <table>
+    <thead><tr><th>Workload</th><th>Initial option to evaluate</th><th>Evidence still required</th></tr></thead>
+    <tbody>
+      <tr><td>Bursty ticket triage</td><td>Hosted or managed warm capacity; dedicated local capacity may sit idle.</td><td>Processing approval, equivalent quality, warm/cold latency, peak demand and recovery.</td></tr>
+      <tr><td>Sustained KB embedding</td><td>Self-hosted if demand amortizes the fully loaded fleet.</td><td>Embedding quality, measured throughput, headroom, GPU hours, storage/network and on-call costs.</td></tr>
+    </tbody>
+  </table>
+  <p>Run bin/compare_hosted_local.py with the export to produce a workload-specific matrix.
+    Unknown workload classes require an operator-reviewed policy. Accounting units are not dollar quotes.
+    Missing latency is not zero latency. Fixture comparisons cannot approve production routing.</p>
+</section>
 <p><%= @window %> — <%= @config.fetch('unit') %></p>
 <p>Price: <%= @config.fetch('price_version') %>; budget: <%= @config.fetch('budget_version') %></p>
 <% if @config.fetch('fixture') %><p>Illustrative fake-provider accounting; not a dollar invoice.</p><% end %>

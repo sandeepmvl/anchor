@@ -77,3 +77,38 @@ serving_adapter:
   attempt_timeout_seconds: 2
   sdk_retries: 0
   production_release_evidence_required: true
+# Synthetic planning only. Each workload rents its own fleet for this comparison.
+hosting_economics:
+  hosted:
+    input_per_million: 2.0
+    output_per_million: 6.0
+    operations_usd: 40
+    warm_p50_ms: 300
+    warm_p99_ms: 900
+    startup_ms: 0
+    latency_provenance: synthetic_not_measured
+    operations_burden: application monitoring and provider quotas
+    data_control: external processing requires tenant approval
+  managed:
+    input_per_million: 0.8
+    output_per_million: 2.0
+    operations_usd: 30
+    warm_p50_ms: 250
+    warm_p99_ms: 700
+    startup_ms: 5000
+    latency_provenance: synthetic_not_measured
+    operations_burden: endpoint lifecycle, quotas and warm minimums
+    data_control: vendor location and retention require approval
+  self_hosted:
+    hours: 720
+    hourly_usd: 1.0
+    infrastructure_usd: 100
+    variable_per_million: 0.0
+    capacity_tokens_s: 20000
+    headroom_fraction: 0.2
+    warm_p50_ms: 150
+    warm_p99_ms: 400
+    startup_ms: 120000
+    latency_provenance: synthetic_not_measured
+    operations_burden: Anchor owns patches, capacity, on-call and recovery
+    data_control: private boundary assumed; access and isolation still require audit

@@ -118,3 +118,51 @@ never removes that refusal. Keep artifact approval, GPU startup, tenant quota,
 isolation, groundedness and live latency evidence before implementing promotion.
 For CPU-only GGUF serving choose llama.cpp's llama-server, not an AWQ rename.
 TGI is in maintenance mode and is not the default for this new deployment.
+
+## Workload hosting economics
+
+The cost dashboard's comparison export is restricted to the selected organization's
+administrators. It contains daily allowlisted workload aggregates, not ticket text,
+customer identifiers or raw usage records. Existing usage events must already pass
+Anchor's redaction-before-storage policy; this export does not repair unsafe source
+storage. Unknown feature names become `other`, never arbitrary exported strings.
+Unknown workload policies stop the Python comparison until an operator reviews them.
+Embedding tokens are added to input demand for the kb_embedding workload; verify
+that the source accounting convention does not count them in input_tokens too.
+Cost fields retain the dashboard accounting unit. Missing cost or latency stays
+missing. Event latency percentiles have unknown warm/cold state and do not establish
+startup, recovery or end-to-end SLO compliance.
+
+bin/compare_hosted_local.py reads the committed 30-day fixture by default, or a
+JSON Lines export through --usage. It writes a matrix with conditional choices,
+fully loaded cost, idle capacity, reserved headroom and break-even sensitivity.
+The comparison allocates a separate fleet per workload; do not sum these estimates
+as a shared-fleet bill. Utilization is a planning demand/capacity assumption, not
+measured GPU occupancy. Replica counts are rounded up. Fixed-replica crossings
+must also fit the reported usable capacity; adding replicas creates cost steps.
+External processing approval and quality equivalence are assumptions in the offline
+policies, not tenant authorizations. No report can change production routing.
+
+### Required offline economics checks
+
+Run the named Python economics tests and the standalone Ruby exporter tests from
+the lesson. These execute the real policy and aggregation code with offline stores.
+They do not verify Rails session middleware, a deployed database schema, GPU fit,
+model quality, provider prices, throughput, cold starts or live network latency.
+Keep the inherited Rails dashboard authorization regressions in the normal app CI.
+The production routing function refuses all reports until a separately reviewed
+real-evidence validator is implemented; changing a report's status cannot release it.
+
+### On your machine: replace assumptions with evidence
+
+In an approved environment, export an authorized tenant's month from the dashboard.
+Confirm source token conventions, workload mappings, retries and accounting units.
+Obtain dated API and managed-endpoint quotes, billing minimums, warm-capacity terms,
+GPU region/replica prices, storage/network costs and an on-call operations allowance.
+Use equivalent quality-approved models and identical redacted request distributions.
+Measure warm end-to-end p50/p99, cold readiness, recovery, failures and peak arrivals
+for all three options. Record model/artifact digest, runtime, hardware, region,
+concurrency, measurement window and raw evidence provenance. Validate processing
+location, retention, access and tenant isolation. Review capacity and privacy before
+price. Attach this evidence to review; neither this CLI nor a successful offline test
+implements production promotion.
