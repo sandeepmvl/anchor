@@ -203,3 +203,10 @@ def resume_refund(path, thread, token):
         assert not after.next
         assert after.values['audit'] == ['triage', 'approved', 'specialist', 'escalation']
         return after.values
+
+
+def policy_query_tool(retriever, claims, client=None, **options):
+    """Read-only agent capability; claims must come from authenticated code."""
+    from anchor_ai.rag import published_query_engine_tool
+    return published_query_engine_tool(retriever, claims['tenant_id'],
+                                       client=client, **options)

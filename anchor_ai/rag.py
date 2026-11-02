@@ -344,3 +344,28 @@ async def answer_release(ticket, configuration, search, client=None):
                 abstained=result['abstained'], evidence=evidence,
                 trajectory=retriever.trajectory,
                 pipeline='advanced' if configuration['advanced_rag'] else 'legacy')
+
+
+class RecordedEvidenceClient:
+    """Extract supplied evidence; do not represent this as model-quality scoring."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def complete(self, messages):
+        self.calls.append(messages)
+        data = json.loads(messages[-1]['content'])
+        sources = data['evidence']['sources']
+        if not sources:
+            return json.dumps(dict(reply=ABSTENTION, citations=[], abstained=True))
+        return json.dumps(dict(
+            reply=' '.join(f"{row['text']} [{row['id']}]" for row in sources),
+            citations=[row['id'] for row in sources], abstained=False))
+
+
+def published_query_engine_tool(retriever, tenant_id, client=None, **options):
+    from anchor_ai.query_engine import QueryEngineTool
+    if client is None:
+        from anchor_ai.llm_client import LlmClient
+        client = ExistingClientAdapter(LlmClient())
+    return QueryEngineTool(retriever, tenant_id, client, **options)
