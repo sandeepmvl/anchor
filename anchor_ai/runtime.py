@@ -457,3 +457,12 @@ def verified_quota_scope(*, verify, token, client_for, feature, bound):
         raise ContextError('unverified_execution_context')
     with quota_scope(client_for(identity, feature), bound=bound):
         yield identity
+
+
+def initialize_provider_resilience(router, *, database, **options):
+    """Call once per worker; this grants no identity or admission allowance."""
+    from anchor_ai.observability import emit_provider_resilience
+    if hasattr(router, 'resilience'):
+        raise ValueError('provider_resilience_already_initialized')
+    options.setdefault('emit', emit_provider_resilience)
+    return router.enable_resilience(database=database, **options)

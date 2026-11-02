@@ -1,0 +1,16 @@
+# Accelerated offline policy, not production latency recommendations.
+max_attempts: 4
+retries_per_provider: 1
+total_seconds: 0.5
+attempt_seconds: 0.05
+base_seconds: 0.01
+cap_seconds: 0.04
+jitter_seconds: 0.005
+trip_threshold: 2
+reset_threshold: 2
+cooldown_seconds: 1
+half_open_probes: 1
+probe_lease_seconds: 0.2
+max_inflight: 4
+sdk_retries: 0
+record_content: false

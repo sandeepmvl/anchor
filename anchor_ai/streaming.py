@@ -203,9 +203,10 @@ async def stream_reply(source, *, ctx=None, interval=0.1, read_timeout=35,
         except Exception as error:
             code = error.code if isinstance(error, ProviderError) else 'invalid_provider_response'
             telemetry.fail(code)
-            yield frame('error', json.dumps({
-                'code': code, 'message': 'Reply interrupted; please retry.'
-            }))
+            message = ('Buffered provider routing does not replay streams.'
+                       if code == 'routing_stream_unsupported'
+                       else 'Reply interrupted; please retry.')
+            yield frame('error', json.dumps({'code': code, 'message': message}))
         finally:
             if pacer:
                 pacer.clear()

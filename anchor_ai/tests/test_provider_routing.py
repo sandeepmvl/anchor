@@ -159,3 +159,78 @@ def test_transient_errors_fail_over_once(tmp_path, scenario):
         assert router.health['primary']['failures'] == 1
         assert [len(adapters[n].requests) for n in ('primary', 'secondary')] == [1, 1]
     asyncio.run(run())
+
+
+def test_sdk_retries_disabled_without_network():
+    from anchor_ai.provider import single_send_openai_client
+    async def run():
+        client = single_send_openai_client(api_key='offline-construction-only')
+        try:
+            assert client.max_retries == 0
+        finally:
+            await client.close()
+    asyncio.run(run())
+    with pytest.raises(ValueError, match='nested_provider_retries'):
+        single_send_openai_client(api_key='offline', max_retries=2)
+
+
+def test_router_rejects_nested_adapter_retries(tmp_path):
+    client, router, authority, adapters, clock = drill.build(tmp_path / 'quota.db')
+    adapters['primary'].max_retries = 2
+    with pytest.raises(ValueError, match='nested_provider_retries'):
+        RoutingProvider(adapters, router.collector, config=router.config)
+
+
+def test_routing_policy_rejects_nested_retries(tmp_path):
+    import yaml
+    from anchor_ai.provider import routing_configuration
+    policy = yaml.safe_load(Path('config/provider_routing.yml').read_text())
+    assert policy['sdk_retries'] == 0
+    policy['sdk_retries'] = 1
+    path = tmp_path / 'invalid.yml'
+    path.write_text(yaml.safe_dump(policy))
+    with pytest.raises(ValueError, match='nested_provider_retries'):
+        routing_configuration(path)
+
+
+def test_runtime_initializes_resilience_once(tmp_path):
+    from anchor_ai.runtime import initialize_provider_resilience
+    async def run():
+        client, router, authority, adapters, clock = drill.build(tmp_path / 'quota.db')
+        boundary = initialize_provider_resilience(router, database=tmp_path / 'circuits.db')
+        assert router.resilience is boundary
+        with pytest.raises(ValueError, match='already_initialized'):
+            initialize_provider_resilience(router, database=tmp_path / 'circuits.db')
+        await client.complete_result('R-42')
+        assert router.served_by == 'primary'
+    asyncio.run(run())
+
+
+def test_resilience_telemetry_rejects_customer_content():
+    from anchor_ai.observability import emit_provider_resilience
+    with pytest.raises(ValueError, match='unsafe_resilience_telemetry'):
+        emit_provider_resilience({'prompt': 'customer text'})
+
+
+def test_stream_refusal_is_not_replayed():
+    from anchor_ai.streaming import stream_reply
+    async def source():
+        raise ProviderError('routing_stream_unsupported', status=503)
+        yield
+    async def run():
+        frames = [item async for item in stream_reply(source())]
+        assert len(frames) == 1
+        assert b'event: error' in frames[0]
+        assert b'routing_stream_unsupported' in frames[0]
+        assert b'does not replay streams' in frames[0]
+    asyncio.run(run())
+
+
+def test_uncertain_attempt_helper_never_settles():
+    from types import SimpleNamespace
+    from anchor_ai.quota_client import retain_uncertain_attempt
+    collector = SimpleNamespace(unresolved=[])
+    retain_uncertain_attempt(collector, 'attempt_1')
+    assert collector.unresolved == ['attempt_1']
+    with pytest.raises(QuotaDenied):
+        retain_uncertain_attempt(collector, 'customer text with spaces')

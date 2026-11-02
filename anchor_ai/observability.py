@@ -743,3 +743,22 @@ def cost_measurement(event, config):
                 attempt_id=event['attempt_id'], logical_call_id=event['logical_call_id'],
                 price_version=event['price_version'], budget_version=event['budget_version'],
                 total=sum(costs.values()), costs=costs)
+
+
+def emit_provider_resilience(record):
+    """Content-free retry decisions, linked to the active request trace."""
+    decisions = {'capacity_rejected', 'attempt_limit', 'deadline', 'circuit_skip',
+                 'success', 'permanent_error', 'backoff', 'unavailable',
+                 'probe_rejected', 'probe_failed', 'probe_success'}
+    if (set(record) != {'decision', 'attempts', 'delay_seconds'}
+            or record['decision'] not in decisions
+            or type(record['attempts']) is not int or record['attempts'] < 0
+            or type(record['delay_seconds']) not in (int, float)
+            or not math.isfinite(record['delay_seconds']) or record['delay_seconds'] < 0):
+        raise ValueError('unsafe_resilience_telemetry')
+    with span('anchor.resilience', stage='provider', attempts=record['attempts']) as item:
+        item.record['resilience'] = dict(record)
+
+
+ERRORS.update({'routing_deadline', 'routing_attempt_limit', 'routing_capacity',
+               'routing_unavailable', 'routing_stream_unsupported', 'routing_tool_unsupported'})

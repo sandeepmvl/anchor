@@ -179,3 +179,11 @@ def require_quota_release(*, production, fixture, evidence=None):
     if production and (fixture or not evidence or
                        any(evidence.get(k) is not True for k in required)):
         raise QuotaDenied('quota_release_evidence_missing')
+
+
+def retain_uncertain_attempt(collector, attempt_id):
+    """Record uncertainty only; never release or settle the authority's bound."""
+    from anchor_ai.observability import safe_id
+    if safe_id(attempt_id) is None:
+        raise QuotaDenied('quota_reservation_invalid')
+    collector.unresolved.append(attempt_id)

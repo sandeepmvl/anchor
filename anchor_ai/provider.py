@@ -2,6 +2,8 @@
 def routing_configuration(path='config/provider_routing.yml'):
     import yaml
     c = yaml.safe_load(Path(path).read_text())
+    if type(c.get('sdk_retries')) is not int or c['sdk_retries'] != 0:
+        raise ValueError('nested_provider_retries')
     for key in ('threshold', 'max_attempts', 'bound'):
         if type(c.get(key)) is not int or c[key] <= 0:
             raise ValueError('invalid_routing_configuration')
@@ -30,6 +32,7 @@ AVAILABILITY = frozenset({'provider_timeout', 'provider_transport_error',
 class OfflineDeployment:
     """Single-send deterministic adapter; never opens a network connection."""
     fixture = True
+    max_retries = 0
 
     def __init__(self):
         self.scenario, self.requests, self.cancelled = 'ok', [], False
@@ -57,7 +60,7 @@ class OfflineDeployment:
 
 
 class RoutingProvider:
-    """One outer HTTP operation; no deployment is revisited within it."""
+    """Buffered router; enable_resilience installs the single retry owner."""
     vision_offline = True
 
     def __init__(self, adapters, collector, *, config=None, clock=None, production=False):
@@ -65,11 +68,19 @@ class RoutingProvider:
         if production:
             raise ValueError('routing_release_evidence_missing')
         self.config = config or routing_configuration()
+        if self.config.get('sdk_retries', 0) != 0:
+            raise ValueError('nested_provider_retries')
+        if any(getattr(a, 'max_retries', 0) != 0 for a in adapters.values()):
+            raise ValueError('nested_provider_retries')
         self.adapters, self.collector, self.clock = adapters, collector, clock or time.monotonic
         self.health = {n: {'failures': 0, 'degraded': False, 'next_probe': 0}
                        for n in self.config['order']}
         self.probe_locks = {n: asyncio.Lock() for n in self.config['order']}
         self.served_by, self.events = None, []
+
+    def enable_resilience(self, *, database, **options):
+        from anchor_ai.resilience import attach
+        return attach(self, database=database, **options)
 
     def key(self):
         return 'offline-routing-boundary'
@@ -443,7 +454,8 @@ class LiveProvider:
         return key
 
     def client(self):
-        return httpx.AsyncClient(transport=self.transport, trust_env=False)
+        transport = self.transport if self.transport is not None else httpx.AsyncHTTPTransport(retries=0)
+        return httpx.AsyncClient(transport=transport, trust_env=False)
 
 
 def configured_provider():
@@ -709,3 +721,11 @@ def admitted_provider(provider):
     """Compose at the HTTP boundary; a verified quota scope is mandatory."""
     from anchor_ai.quota_client import AdmittedProvider
     return AdmittedProvider(provider)
+
+
+def single_send_openai_client(*, api_key, **options):
+    """SDK construction only; never enable retries underneath the router."""
+    from openai import AsyncOpenAI
+    if options.pop('max_retries', 0) != 0:
+        raise ValueError('nested_provider_retries')
+    return AsyncOpenAI(api_key=api_key, max_retries=0, **options)

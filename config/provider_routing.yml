@@ -1,4 +1,5 @@
 fixture: true
+sdk_retries: 0
 logical_model: support-answer
 threshold: 2
 cooldown_seconds: 30
