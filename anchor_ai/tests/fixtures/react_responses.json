@@ -1,0 +1,29 @@
+{
+  "tenant_id": 1,
+  "generation_id": "react-fixture-v1",
+  "tickets": {
+    "eligibility": {
+      "question": "Is order A17 eligible for a refund?",
+      "required_ids": [701, 702],
+      "decisions": [
+        {"requires": [], "query": "A17 eligibility class"},
+        {"requires": [701], "query": "standard refund window"}
+      ],
+      "answer": {
+        "reply": "A17 has standard eligibility and is within the 30-day refund window. It is eligible; no refund has been issued.",
+        "citations": [701, 702],
+        "abstained": false
+      }
+    }
+  },
+  "searches": {
+    "A17 eligibility class": [701],
+    "standard refund window": [702]
+  },
+  "passages": {
+    "701": {"id": 701, "text": "A17: standard eligibility; delivered 10 days ago. Contact: customer@example.test."},
+    "702": {"id": 702, "text": "Standard orders are refund-eligible within 30 days of delivery."}
+  },
+  "repeat_queries": ["A17 eligibility class", "A17 eligibility class", "A17 eligibility class"],
+  "cycle_queries": ["A17 eligibility class", "standard refund window", "  a17   ELIGIBILITY class  "]
+}

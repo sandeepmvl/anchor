@@ -284,3 +284,13 @@ class AgenticRuntime:
                 if not new_ids:
                     return finish('no_new_evidence')
             return finish('iteration_budget')
+
+
+def build_agent_runtime(retriever, *, strategy='agentic', **kwargs):
+    """Select a controller without changing existing callers' default."""
+    if strategy == 'agentic':
+        return AgenticRuntime(retriever, **kwargs)
+    if strategy == 'react':
+        from anchor_ai.react import ReActRuntime
+        return ReActRuntime(retriever, **kwargs)
+    raise ValueError('invalid_agent_strategy')

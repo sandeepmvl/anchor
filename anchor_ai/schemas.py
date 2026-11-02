@@ -242,3 +242,13 @@ class RefundToolResult(BaseModel):
     order_id: str = Field(pattern=r'^A[0-9]{1,12}$')
     eligible: bool
     reason: Literal['within_window', 'outside_window']
+
+
+class ReActContent(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    reasoning: Literal[
+        'Request another targeted search.',
+        'Policy returned a final answer without a tool call.',
+        'Policy declared the accumulated evidence sufficient.',
+    ]
+    final: DenseRagResponse | None = None

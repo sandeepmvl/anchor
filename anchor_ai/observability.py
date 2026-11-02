@@ -195,3 +195,25 @@ def tool_span(scope, call):
               conversation_id=scope.conversation_id, tool_name=name,
               tool_call_fingerprint=fingerprint) as item:
         yield item
+
+
+REACT_EVENT_FIELDS = {
+    'agent_iteration', 'decision_summary', 'tool_name', 'query_fingerprint',
+    'tool_calls', 'evidence_chunk_ids', 'agent_exit', 'observation_redacted',
+}
+FIELDS.update(REACT_EVENT_FIELDS)
+
+
+def emit_react(event, emit, **metadata):
+    """Export safe metadata, never model transcripts or raw tool results."""
+    if event not in {'decision_summary', 'action', 'observation', 'exit'}:
+        raise ValueError('invalid_react_event')
+    if set(metadata) - REACT_EVENT_FIELDS:
+        raise ValueError('unsafe_react_metadata')
+    if 'decision_summary' in metadata and metadata['decision_summary'] not in AGENT_SUMMARIES.values():
+        raise ValueError('unsafe_react_summary')
+    with span('python.react.' + event, stage='agent', **metadata) as item:
+        record = {'event': event, **metadata}
+        for key in ('request_id', 'trace_id', 'span_id', 'parent_span_id'):
+            record[key] = item.record[key]
+        emit(record)
