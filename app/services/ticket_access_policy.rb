@@ -3,8 +3,15 @@ class TicketAccessPolicy
   attr_reader :membership
 
   def initialize(session)
+    raise Unauthenticated unless session[:membership_id] && session[:user_id]
     @membership = Membership.find_by(id: session[:membership_id], user_id: session[:user_id])
     raise Unauthenticated unless @membership
+  end
+
+  def authenticated_membership
+    membership.reload
+  rescue ActiveRecord::RecordNotFound
+    raise Unauthenticated
   end
 
   def tickets

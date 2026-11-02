@@ -267,3 +267,19 @@ class RealtimeTranscript(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     text: str = Field(min_length=1, max_length=4000)
     untrusted: Literal[True] = True
+
+
+@dataclass(frozen=True, repr=False)
+class AuthenticatedToolExecution:
+    """Application-held credential, never constructed from tool-call arguments.
+
+    The trusted gateway supplies an authenticated Rails session cookie and its
+    expiry. Rails still resolves current grants; these identity fields cannot
+    grant a role. Approval is a separate, short-lived Rails-signed receipt.
+    """
+    tenant_id: int
+    conversation_id: int
+    principal_id: str
+    expires_at: float
+    session_cookie: str
+    approval_receipt: str | None = None

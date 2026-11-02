@@ -366,3 +366,67 @@ class DurableOfflineOrderBackend(MemoryOrderBackend):
                        (scope.tenant_id, idempotency_key, arguments, json.dumps(result)))
             self.invocations.append(('issue_refund', scope.tenant_id, order_id))
             return result
+
+
+class RailsOrderBackend:
+    """Backend authorization is mandatory; transport never falls back to replay.
+
+    transport is a trusted async callable: (path, body, session_cookie) -> dict.
+    Bind it to a fixed Rails origin and session/CSRF handling in the gateway.
+    Never accept the transport or execution context from model output.
+    """
+    def __init__(self, execution, transport, *, clock=None):
+        import time
+        self.execution = execution
+        self.transport = transport
+        self.clock = clock or time.time
+
+    def _context(self, scope):
+        import math
+        from .contracts import AuthenticatedToolExecution
+        value = self.execution
+        if (not isinstance(value, AuthenticatedToolExecution)
+                or not value.session_cookie or not value.principal_id
+                or not math.isfinite(value.expires_at)
+                or value.expires_at <= self.clock()
+                or value.tenant_id != scope.tenant_id
+                or value.conversation_id != scope.conversation_id):
+            raise PermissionError('authenticated_context_required')
+        return value
+
+    def owns(self, scope, arguments):
+        # This is a preliminary context check, not a resource authorization.
+        # Rails always performs the authoritative resource lookup on dispatch.
+        try:
+            self._context(scope)
+            return True
+        except (PermissionError, TypeError, ValueError):
+            return False
+
+    async def _send(self, action, scope, arguments, *, idempotency_key=None):
+        execution = self._context(scope)
+        schema = RefundArguments if action == 'issue_refund' else OrderToolArguments
+        if action not in ('issue_refund', 'lookup_order', 'check_refund'):
+            raise PermissionError('action_denied')
+        canonical = schema.model_validate(arguments).model_dump()
+        body = {'action': action, 'arguments': canonical}
+        if action == 'issue_refund':
+            if not execution.approval_receipt or not idempotency_key:
+                raise PermissionError('approval_required')
+            body.update(approval_receipt=execution.approval_receipt,
+                        idempotency_key=idempotency_key)
+        response = await self.transport('/api/tool_actions', body, execution.session_cookie)
+        if not isinstance(response, dict) or response.get('ok') is not True:
+            raise PermissionError('backend_authorization_denied')
+        return response['data']
+
+    async def lookup_order(self, *, scope, order_id):
+        return await self._send('lookup_order', scope, {'order_id': order_id})
+
+    async def check_refund(self, *, scope, order_id):
+        return await self._send('check_refund', scope, {'order_id': order_id})
+
+    async def issue_refund(self, *, scope, order_id, amount_cents, idempotency_key):
+        return await self._send('issue_refund', scope,
+                                {'order_id': order_id, 'amount_cents': amount_cents},
+                                idempotency_key=idempotency_key)

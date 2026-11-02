@@ -31,4 +31,12 @@ unless Rails.env.production?
       docs: docs, built_against_tag: 'golden-baseline-v1')
   end
   puts 'Golden baseline registered as immutable v1 (replay tenant only).'
+
+  [['Authorization Acme', 'A104'], ['Authorization Beta', 'B204']].each do |name, reference|
+    organization = Organization.find_or_create_by!(name: name)
+    organization.orders.find_or_create_by!(reference: reference) do |order|
+      order.payment_id = "offline_#{reference}"
+      order.refund_limit_cents = 500
+    end
+  end
 end

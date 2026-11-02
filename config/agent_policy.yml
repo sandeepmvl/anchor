@@ -52,3 +52,9 @@ incident:
 # Hand-rolled policy: auditable and cheap, but narrow pattern coverage.
 # No screening result grants authority or replaces document quarantine.
 # A longer hardened prompt must still fit the existing context budget.
+backend_authorization:
+  roles:
+    admin: [lookup_order, check_refund, issue_refund]
+    agent: [lookup_order, check_refund, issue_refund]
+    end_customer: []
+  approval_purpose: anchor-tool-refund-v1

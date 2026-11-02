@@ -1,6 +1,7 @@
 Rails.application.config.filter_parameters += [:summary, :authorization]
 Rails.application.config.filter_parameters += [:credential]
 Rails.application.config.filter_parameters += [:x_anchor_quota_context]
+Rails.application.config.filter_parameters += [:approval_receipt]
 
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
@@ -28,4 +29,5 @@ Rails.application.routes.draw do
   post '/api/ai_budget_reservations', to: 'api/ai_budget_reservations#create'
   patch '/api/ai_budget_reservations/:id', to: 'api/ai_budget_reservations#update'
   get '/api/ai_budget_reservations', to: 'api/ai_budget_reservations#index'
+  post '/api/tool_actions', to: 'api/tool_actions#create'
 end
