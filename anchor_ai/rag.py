@@ -100,3 +100,27 @@ def published_runtime(snapshot, tenant_id, embedding_client, emit=None):
     from anchor_ai.llm_client import LlmClient
     return RagRuntime(DenseRetriever(snapshot, tenant_id, embedding_client),
                       ExistingClientAdapter(LlmClient()), emit=emit)
+
+
+def hybrid_settings():
+    from pathlib import Path
+    import yaml
+    path = Path(__file__).resolve().parents[1] / 'config/retrieval.yml'
+    return yaml.safe_load(path.read_text())['hybrid']
+
+
+def fixture_hybrid_runtime(tenant_id):
+    from anchor_ai.hybrid_retriever import RecordedHybridClient
+    client = RecordedHybridClient()
+    client.acquire_snapshot(tenant_id)
+    settings = hybrid_settings()
+    return published_hybrid_runtime(tenant_id, client.acquire_snapshot,
+                                   client.dense_search, client.sparse_search,
+                                   **{key: settings[key] for key in
+                                      ('candidate_depth', 'rrf_k', 'deadline_seconds')})
+
+
+def published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
+                             **settings):
+    from anchor_ai.hybrid_retriever import HybridRuntime
+    return HybridRuntime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings)

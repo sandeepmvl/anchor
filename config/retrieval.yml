@@ -73,3 +73,10 @@ sparse:
   b: 0.75
   top_k: 5
   tokenizer_version: codes-v1
+
+hybrid:
+  candidate_depth: 5
+  rrf_k: 60
+  deadline_seconds: 2
+  fixture_env: ANCHOR_HYBRID_FIXTURE
+  url: http://127.0.0.1:8000/v1/retrieve/hybrid

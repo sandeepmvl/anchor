@@ -105,3 +105,28 @@ class SparseHit(BaseModel):
     tenant_id: int = Field(gt=0)
     text: str
     score: float = Field(allow_inf_nan=False)
+
+
+class HybridRequest(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    query: str = Field(min_length=1, max_length=1800)
+    top_k: int = Field(default=3, ge=1, le=20)
+
+
+class HybridHit(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    id: int = Field(gt=0)
+    tenant_id: int = Field(gt=0)
+    text: str
+    score: float = Field(ge=0, allow_inf_nan=False)
+    dense: float = Field(ge=0, allow_inf_nan=False)
+    sparse: float = Field(ge=0, allow_inf_nan=False)
+
+
+class HybridResponse(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    tenant_id: int = Field(gt=0)
+    generation_id: str = Field(min_length=1)
+    hits: list[HybridHit]

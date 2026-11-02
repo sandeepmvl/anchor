@@ -158,3 +158,7 @@ ERRORS.update({'ingestion_failed', 'retrieval_not_configured', 'retrieval_failed
 def emit_retrieval(record):
     with span('python.dense_rag', stage='retrieval') as item:
         item.set(**{key: record[key] for key in RETRIEVAL_FIELDS if key in record})
+
+
+FIELDS.update({'dense_ms', 'sparse_ms', 'fusion_ms', 'total_ms'})
+ERRORS.add('retrieval_deadline')

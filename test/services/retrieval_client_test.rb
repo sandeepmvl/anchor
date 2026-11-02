@@ -96,3 +96,77 @@ class DenseChatIntegrationTest < ActionDispatch::IntegrationTest
     end
   end
 end
+
+class HybridRetrievalClientTest < ActiveSupport::TestCase
+  def traceparent
+    '00-' + 'a' * 32 + '-' + 'b' * 16 + '-01'
+  end
+
+  def hybrid_result(tenant = 1)
+    { 'tenant_id' => tenant, 'generation_id' => 'fixture-g1', 'hits' => [
+      { 'id' => 102, 'tenant_id' => tenant, 'text' => 'Synthetic order excerpt',
+        'score' => 1.0 / 61 + 1.0 / 62, 'dense' => 1.0 / 62, 'sparse' => 1.0 / 61 }
+    ] }
+  end
+
+  def test_hybrid_http_propagates_trusted_scope_and_trace
+    calls = []
+    result = hybrid_result
+    original = Net::HTTP.instance_method(:request)
+    Net::HTTP.define_method(:request) do |request, *args|
+      calls << request
+      Struct.new(:code, :body).new('200', JSON.generate(result))
+    end
+    client = RetrievalClient.new(
+      context: RetrievalClient::TrustedContext.new(tenant_id: 1, conversation_id: 10),
+      url: 'http://127.0.0.1:8000/v1/dense_rag', secret: 'test-secret')
+    assert_equal result, client.retrieve('order 4821', request_id: 'hybrid-rails', traceparent: traceparent)
+    assert_equal 1, calls.length
+    request = calls.first
+    assert_equal '/v1/retrieve/hybrid', request.path
+    assert_equal 'test-secret', request['X-Anchor-Secret']
+    assert_equal 'hybrid-rails', request['X-Request-Id']
+    assert_equal traceparent, request['traceparent']
+    assert_equal({ 'query' => 'order 4821', 'tenant_id' => 1,
+                   'conversation_id' => 10, 'top_k' => 3 }, JSON.parse(request.body))
+  ensure
+    Net::HTTP.define_method(:request, original) if original
+  end
+
+  def test_hybrid_failure_never_retries_unscoped
+    calls = []
+    original = Net::HTTP.instance_method(:request)
+    Net::HTTP.define_method(:request) do |request, *args|
+      calls << request
+      Struct.new(:code, :body).new('503', '{}')
+    end
+    client = RetrievalClient.new(
+      context: RetrievalClient::TrustedContext.new(tenant_id: 1, conversation_id: 10),
+      url: 'http://127.0.0.1:8000/v1/dense_rag', secret: 'test-secret')
+    assert_raises(RetrievalClient::Error) do
+      client.retrieve('order 4821', request_id: 'hybrid-rails', traceparent: traceparent)
+    end
+    assert_equal 1, calls.length
+    assert_equal '/v1/retrieve/hybrid', calls.first.path
+    assert_equal 1, JSON.parse(calls.first.body)['tenant_id']
+  ensure
+    Net::HTTP.define_method(:request, original) if original
+  end
+
+  def test_hybrid_rejects_foreign_tenant_without_fallback
+    calls = []
+    transport = lambda do |payload, headers|
+      calls << [payload, headers]
+      hybrid_result(2)
+    end
+    client = RetrievalClient.new(
+      context: RetrievalClient::TrustedContext.new(tenant_id: 1, conversation_id: 10),
+      transport: transport)
+    assert_raises(RetrievalClient::Error) do
+      client.retrieve('order 4821', request_id: 'hybrid-rails', traceparent: traceparent)
+    end
+    assert_equal 1, calls.length
+    assert_equal 1, calls.first[0][:tenant_id]
+    refute calls.first[0].key?(:history)
+  end
+end
