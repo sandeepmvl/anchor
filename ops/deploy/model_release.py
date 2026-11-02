@@ -107,6 +107,13 @@ class PinnedRelease:
         return self.reply
 
 
+def pin_bundle_snapshot(snapshot, *, tenant_id, required_contract, offline=False):
+    """Bundle-aware admission supersedes independent model selection for that request."""
+    from ops.deploy.release_bundle import pin
+    return pin(snapshot, tenant_id=tenant_id,
+               required_contract=required_contract, offline=offline)
+
+
 def pin_release(path=STATE, manifest_path=MANIFEST):
     state = current_state(path, manifest_path)
     selected = state['current']

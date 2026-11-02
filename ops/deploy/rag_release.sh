@@ -2,6 +2,11 @@
 set -eu
 cd "$(dirname "$0")/../.."
 mode="${1:---verify-only}"
+# Bundle recovery swaps an already-registered index; it never rebuilds or deploys it.
+if [ "$mode" = '--revert-bundle' ]; then
+  shift
+  exec sh ops/deploy/rollback_pipeline.sh --revert "$@"
+fi
 case "$mode" in
   --verify-only|--deploy) ;;
   *) echo 'usage: rag_release.sh [--verify-only|--deploy]' >&2; exit 2 ;;

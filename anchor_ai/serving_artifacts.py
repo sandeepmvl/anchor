@@ -12,6 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / 'eval/datasets/self_hosted_quality_cases.jsonl'
 
 
+def pin_release_bundle(snapshot, *, tenant_id, required_contract, offline=False):
+    """Admission boundary: retain this result through retrieval and generation."""
+    from ops.deploy.release_bundle import pin
+    return pin(snapshot, tenant_id=tenant_id,
+               required_contract=required_contract, offline=offline)
+
+
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 

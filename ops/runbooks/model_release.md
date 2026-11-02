@@ -3,7 +3,22 @@
 Course project: Anchor.
 
 ## Scope
-This release controller selects constructed offline recordings only. It never enables a live model. Model selection is independent of Rails deployment, prompt selection, and retrieval-generation selection.
+The original model release controller selects constructed offline recordings only. It never enables a live model. Its independent selection API remains available for existing callers. Bundle-aware requests instead pin a complete prompt/model/index release through AiReleaseRegistry and must not reread independent pointers during that request.
+
+## Atomic bundle recovery — lesson 3759
+The shared ai_release_pointers row is keyed by tenant and answer channel. Admission reads the routing fields and immutable bundle map in one SELECT. Stable conversation hashing determines the candidate slice. A generation check rejects stale writers; a row lock serializes changes. Pointer, candidate invalidation, and audit history commit in one database transaction. SQLite serializes writes in the local exercise; production must use the application's shared durable database and retry transient database-lock/deadlock failures without bypassing generation checks.
+
+Register immutable artifacts before staging. Apply the migration through normal Rails deployment. Publish prompt versions with PromptRegistry.publish; verify model availability and resident index readiness before admitting traffic. Wrap synchronous Rails admission with registry.with_request and pass its exported snapshot to the Python worker. Queued jobs must persist that snapshot, not a mutable alias. Python calls serving_artifacts.pin_release_bundle once, then uses the returned prompt/model/index and snapshot_for_release for the cache. Existing routes are not automatically rewired by this lesson; wire admission explicitly before enabling bundle routing. Never globally cache a request-pinned object.
+
+The required offline exercise uses the actual model, migration and registry through labs/rollback-strategies/registry_demo.rb. Run the rollback_pipeline.sh stages shown in the lesson. The local .anchor-release-demo.sqlite3 file holds exercise state only. This runner uses a deterministic fixture adapter and no live-provider environment switch: ANCHOR_LLM_MODE=live still belongs to the existing provider adapter, not to this release simulator. A production adapter must consume the pinned immutable model identifier and preserve tenant authorization and safe-tool controls.
+
+Promotion requires sufficient completed control/candidate scores, a follow-up-sized window, absolute quality/error/latency limits and a relative quality limit. The fixture golden and recorded-judge composition runs through eval.release_gate and is bound to the full bundle. These are constructed scores, not production evidence. This registry deliberately refuses all non-offline selection until a trusted readiness/evaluation importer is implemented; setting a JSON flag or provider variable cannot open that gate.
+
+Revert clears candidate assignments for all new turns. Existing work retains its original bundle and cache namespace. For a promoted candidate, revert restores the prior compatible bundle. It does not cancel streaming work or reverse tool actions. Keep confirmation, authorization and idempotency controls in place.
+
+For an index-only incident, register a new compatible bundle retaining prompt and model and selecting the already-built prior resident index. Promote or revert only its pointer; do not rebuild, copy or restore index contents in the incident path. Retain tenant filters. If a prior bundle requires a removed schema/tool, refuse revert, disable unsafe actions and roll forward or restore a compatible shim first.
+
+Before production use, collect trusted golden and versioned-judge evidence, candidate/control health by actual served identifiers, live readiness for both targets, and security regressions. Measure fleet acknowledgment and propagation, not just database commit time. This lab verifies neither live inference nor authenticated HTTP integration nor propagation across serving hosts.
 
 ## Trust and identity
 Review config/model_releases.yml in source control. Its expected JSON contents define canonical SHA-256 identities. Promotion compares candidate artifacts to those expectations and reruns the recorded gate. Do not edit the manifest to excuse an unexpected hash. Publish artifacts immutably; keep adapters and their original configs alongside any merged export.

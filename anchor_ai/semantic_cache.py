@@ -26,6 +26,7 @@ class Snapshot:
     model_version: str
     retrieval_version: str
     eligibility: str = 'unclassified'
+    release_namespace: str = 'legacy'
 
     def __post_init__(self):
         if type(self.tenant_id) is not int or self.tenant_id <= 0:
@@ -40,7 +41,18 @@ class Snapshot:
         return (self.tenant_id, self.role, self.audience, self.locale,
                 self.permission_version, self.answer_path, self.kb,
                 self.embedding_version, self.prompt_version, self.model_version,
-                self.retrieval_version)
+                self.retrieval_version, self.release_namespace)
+
+
+def snapshot_for_release(pinned, **scope):
+    """Use the same admitted bundle for generation and semantic-cache isolation."""
+    forbidden = {'tenant_id', 'prompt_version', 'model_version',
+                 'retrieval_version', 'release_namespace'}
+    if forbidden.intersection(scope):
+        raise ValueError('release_cache_scope_override')
+    return Snapshot(tenant_id=pinned.tenant_id, prompt_version=pinned.prompt,
+                    model_version=pinned.model, retrieval_version=pinned.index,
+                    release_namespace=pinned.cache_namespace, **scope)
 
 
 REASONS = {'public_faq', 'unclassified', 'personalized', 'action_bearing',

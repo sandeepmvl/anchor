@@ -166,6 +166,20 @@ def offline_bundle(expected, regressed=False, now=None):
                 reports=reports)
 
 
+def release_bundle_fixture_gate(target):
+    """Constructed replay through the existing gate; never production evidence."""
+    expected = manifest('release_bundle', target)
+    good = 'Order A17 requires a policy check and confirmation before refund.'
+    regressed = target.get('reply') != good
+    bundle = offline_bundle(expected, regressed=regressed)
+    # This fixture's golden assertion detects the deliberately invented refund.
+    bundle['reports']['golden'].update(status='failed' if regressed else 'passed',
+                                       score=0.0 if regressed else 1.0)
+    verdict = decide(bundle, expected, production=False)
+    return dict(verdict, deployment_approved=False,
+                quality_basis='constructed_exact_match_and_recorded_judge_not_live_quality')
+
+
 def save(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

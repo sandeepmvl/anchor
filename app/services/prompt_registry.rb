@@ -58,8 +58,19 @@ class PromptRegistry
     row
   end
 
+  # Call the registry's with_request at admission; nested work keeps that snapshot.
+  def self.with_release(pinned)
+    prior = Thread.current[:anchor_reply_release]
+    Thread.current[:anchor_reply_release] = pinned
+    yield
+  ensure
+    Thread.current[:anchor_reply_release] = prior
+  end
+
   def self.active_reply
-    resolve(ENV.fetch('ANCHOR_REPLY_PROMPT_VERSION', 'chat:v3'))
+    pinned = Thread.current[:anchor_reply_release]
+    version = pinned ? pinned.fetch('bundle').fetch('prompt') : ENV.fetch('ANCHOR_REPLY_PROMPT_VERSION', 'chat:v3')
+    resolve(version)
   end
 
   # Separate from immutable chat contracts; never export tenant policy here.

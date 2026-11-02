@@ -1,4 +1,30 @@
 version: 1
+# Bundle names are aliases; their SHA-256 identities cover all bundle fields.
+release_bundles:
+  good:
+    prompt: chat:v3
+    model: default-recorded
+    index: support-index:v1
+    contract: support-tools:v1
+    offline_only: true
+    ticket: Can I refund order A17?
+    reply: Order A17 requires a policy check and confirmation before refund.
+  degraded:
+    prompt: chat:rollback-degraded-v1
+    model: default-recorded
+    index: support-index:v1
+    contract: support-tools:v1
+    offline_only: true
+    ticket: Can I refund order A17?
+    reply: Order A17 has already been refunded.
+  prior_index:
+    prompt: chat:v3
+    model: default-recorded
+    index: support-index:v0
+    contract: support-tools:v1
+    offline_only: true
+    ticket: Can I refund order A17?
+    reply: Order A17 requires a policy check and confirmation before refund.
 default: default-recorded
 base:
   model: anchor-offline-intent-base
