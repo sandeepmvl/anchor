@@ -22,3 +22,18 @@ axes:
   maintenance:
     lean: [2, 0, 0]
     funded: [0, 1, 2]
+dataset:
+  rubric_version: refund-response-v1
+  labels: [refund_review, refund_decline]
+  near_duplicate_threshold: 0.85
+  input_length: [20, 2000]
+  output_length: [20, 1000]
+  splits: [train, validation, held_out]
+  status: candidate_export_not_training_release
+  readiness_checks:
+    - reviewed_context_targets_and_labels
+    - pii_flag_and_defer_plus_redaction_and_human_review
+    - authorized_tenant_and_permitted_training_use
+    - inspected_duplicates_and_grouped_splits
+    - declared_label_coverage
+    - independent_golden_dataset_and_judge_regression_gate

@@ -65,3 +65,19 @@ def score(feature, policy=None):
         'refund_authorized': False,
         'model_override': None,
     }
+
+
+def sft_examples(rows, policy=None):
+    policy = load_policy() if policy is None else policy
+    result = []
+    for row in rows:
+        if set(row) != {'input', 'output', 'label'}:
+            raise ValueError('invalid_curated_schema')
+        if row['label'] not in policy['dataset']['labels']:
+            raise ValueError('invalid_curated_label')
+        if any(not isinstance(row[k], str) or not row[k].strip()
+               for k in ('input', 'output')):
+            raise ValueError('empty_training_text')
+        result.append({'prompt': [{'role': 'user', 'content': row['input']}],
+                       'completion': [{'role': 'assistant', 'content': row['output']}]})
+    return result

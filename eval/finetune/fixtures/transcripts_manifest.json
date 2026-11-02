@@ -1,0 +1,10 @@
+{
+  "tenant_id": "demo",
+  "scope": "fictional_offline_exercise_only",
+  "training_permitted": true,
+  "rubric_version": "refund-response-v1",
+  "reviewer": "fixture-reviewer",
+  "approved_ids": ["a", "a2", "a3", "a4", "b", "c", "d", "e", "f", "pending", "old", "short"],
+  "pii_reviewed_ids": ["a", "a2", "a3", "a4", "b", "c", "d", "e", "f", "old", "short"],
+  "note": "Simulated approvals demonstrate mechanics, not production readiness."
+}

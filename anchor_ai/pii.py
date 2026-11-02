@@ -50,3 +50,49 @@ def redact_evaluation(value):
         return {redact_evaluation(key): redact_evaluation(item)
                 for key, item in value.items()}
     return value
+
+
+# Training exports use additional detectors without changing ingestion behavior.
+FINETUNING_PATTERNS = (
+    (EMAIL, '[REDACTED_EMAIL]'),
+    (r'\b\d{3}[- ]\d{3}[- ]\d{4}\b', '[REDACTED_PHONE]'),
+)
+
+
+def finetuning_detected(text):
+    patterns = [rule['pattern'] for rule in CONFIG['pii_patterns']]
+    patterns += [pattern for pattern, _ in FINETUNING_PATTERNS]
+    return any(re.search(pattern, text, re.I) for pattern in patterns)
+
+
+def redact_finetuning_text(text):
+    # Apply training placeholders before overlapping ingestion rules.
+    for pattern, replacement in FINETUNING_PATTERNS:
+        text = re.sub(pattern, replacement, text, flags=re.I)
+    # Retain all configured protections for other detected sensitive values.
+    return redact(text)
+
+
+def redact_finetuning_batch(rows):
+    """Return a complete safe batch, or raise without returning partial results."""
+    try:
+        safe = []
+        for row in rows:
+            if set(row) != {'input', 'output', 'label'}:
+                raise ValueError()
+            if row['label'] not in {'refund_review', 'refund_decline'}:
+                raise ValueError()
+            result = {'label': row['label']}
+            for field in ('input', 'output'):
+                value = row[field]
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError()
+                value = redact_finetuning_text(value)
+                if not value.strip() or finetuning_detected(value):
+                    raise ValueError()
+                result[field] = value
+            safe.append(result)
+        return safe
+    except Exception:
+        # Never include source text or detector exception details in a log.
+        raise ValueError('finetuning_redaction_failed') from None
