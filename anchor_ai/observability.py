@@ -45,6 +45,12 @@ ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'unsupported_reasoning_model', 'replay_miss', 'client_disconnect',
           'context_budget_exceeded'}
 
+# Diagnostic metadata only: never include scripts, environment, or stdout.
+FIELDS.update({'sandbox_backend', 'sandbox_exit_reason', 'sandbox_output_bytes'})
+ERRORS.update({'isolation_unavailable', 'capacity_unavailable', 'tenant_quota',
+               'unapproved_script', 'sandbox_unauthorized', 'confirmation_required',
+               'egress_denied', 'invalid_tenant', 'invalid_deadline'})
+
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec='milliseconds')

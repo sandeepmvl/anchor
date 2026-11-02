@@ -1,3 +1,19 @@
+async def run_diagnostic_ticket(runtime, token, service, *, confirmed=False, dry_run=True):
+    """Dedicated read-only diagnostic path; never a financial-tool dispatcher."""
+    from anchor_ai.tools import register_sandbox
+    scope = runtime.identity(token)
+    registry = register_sandbox({}, service)
+    # Deterministic offline planner: no source code, tenant ID, or authority fields.
+    proposal = {'tool': 'run_diagnostic', 'arguments': {'script_id': 'ticket_diagnostic'}}
+    tool = registry[proposal['tool']]
+    arguments = tool.arguments.model_validate(dict(proposal['arguments'], confirmed=confirmed,
+                                                   dry_run=dry_run))
+    with span('python.diagnostic_agent', stage='agent', tenant_id=scope.tenant_id,
+              conversation_id=scope.conversation_id):
+        result = await tool.run(scope=scope, **arguments.model_dump())
+        return tool.result.model_validate(result).model_dump()
+
+
 import asyncio
 import copy
 import hashlib

@@ -1,0 +1,28 @@
+version: 1
+limits:
+  cpu_seconds: 1
+  address_space_bytes: 67108864
+  file_bytes: 4096
+  open_files: 32
+  wall_seconds: 2.0
+  output_bytes: 4096
+admission:
+  global_active: 4
+  tenant_active: 1
+  tenant_runs: 20
+  tenant_cost_units: 20
+broker:
+  allowed_domains: [kb.anchor.example]
+production:
+  image: anchor-sandbox:local
+  network: none
+  read_only: true
+  host_mounts: []
+  user: '65532:65532'
+  cap_drop: [ALL]
+  no_new_privileges: true
+  seccomp: ops/sandbox/sandbox-seccomp.json
+  cpus: 0.5
+  memory: 256m
+  pids_limit: 50
+  scratch_bytes: 16777216

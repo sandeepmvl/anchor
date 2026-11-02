@@ -1,3 +1,12 @@
+def register_sandbox(registry, service):
+    from .sandbox import SandboxArguments, SandboxResult
+    result = dict(registry)
+    result['run_diagnostic'] = Tool(
+        'Run the approved read-only ticket diagnostic; requires confirmation.',
+        SandboxArguments, SandboxResult, service.run)
+    return result
+
+
 def native_definitions(registry):
     """Keep existing schemas; local Pydantic validation remains authoritative."""
     result = definitions(registry, 'responses')
@@ -340,13 +349,14 @@ class DurableOfflineOrderBackend(MemoryOrderBackend):
                 WHERE tenant_id=? AND action_key=?''',
                 (scope.tenant_id, idempotency_key)).fetchone()
             if row:
-                if row[0] != arguments:
+                previous, result = row
+                if previous != arguments:
                     raise ValueError('idempotency_conflict')
-                return json.loads(row[1])
+                return json.loads(result)
             if not self.rows[(scope.tenant_id, order_id)]['eligible']:
                 raise ValueError('refund_ineligible')
             result = {'order_id': order_id, 'amount_cents': amount_cents, 'status': 'refunded'}
-            db.execute('INSERT INTO graph_tool_results VALUES (?,?,?,?)',
+            db.execute('INSERT INTO graph_tool_results VALUES(?,?,?,?)',
                        (scope.tenant_id, idempotency_key, arguments, json.dumps(result)))
             self.invocations.append(('issue_refund', scope.tenant_id, order_id))
             return result

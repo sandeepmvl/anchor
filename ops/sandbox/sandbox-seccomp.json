@@ -1,0 +1,28 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "syscalls": [
+    {
+      "names": [
+        "read", "write", "readv", "writev", "close", "close_range",
+        "openat", "newfstatat", "fstat", "stat", "lstat", "statx",
+        "lseek", "pread64", "getdents64", "readlink", "readlinkat",
+        "access", "faccessat", "faccessat2", "getcwd", "chdir",
+        "mmap", "mprotect", "munmap", "mremap", "madvise", "brk",
+        "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack",
+        "futex", "set_tid_address", "set_robust_list", "rseq",
+        "arch_prctl", "prlimit64", "getrlimit", "getrandom",
+        "getpid", "getppid", "gettid", "getuid", "geteuid",
+        "getgid", "getegid", "getresuid", "getresgid", "getgroups",
+        "clock_gettime", "clock_nanosleep", "nanosleep", "gettimeofday",
+        "uname", "sysinfo", "sched_getaffinity", "sched_yield",
+        "fcntl", "ioctl", "dup", "dup2", "dup3", "pipe", "pipe2",
+        "poll", "ppoll", "select", "pselect6", "getrusage", "times",
+        "execve", "exit", "exit_group", "fork", "vfork", "wait4",
+        "socket", "connect", "getsockopt", "setsockopt", "getsockname",
+        "getpeername", "sendto", "recvfrom", "shutdown"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
