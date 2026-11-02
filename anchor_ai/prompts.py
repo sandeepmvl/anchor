@@ -43,6 +43,8 @@ def render_structured(ticket):
 
 
 def render_chat(contract, ticket):
+    from anchor_ai.jailbreak_guard import require_allowed
+    require_allowed(str(ticket))
     return contract.template.replace('{{ticket}}', str(ticket))
 
 
@@ -146,6 +148,12 @@ async def resolve_reply_prompt(*, http_client=None):
         return await fetch(http_client)
     async with httpx.AsyncClient() as client:
         return await fetch(client)
+
+
+async def resolve_guarded_reply_prompt(ticket, *, history=(), http_client=None):
+    from anchor_ai.jailbreak_guard import require_allowed
+    require_allowed(str(ticket), history)
+    return await resolve_reply_prompt(http_client=http_client)
 
 
 from dataclasses import dataclass

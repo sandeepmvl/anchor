@@ -101,13 +101,25 @@ def test_summary_failure_is_bounded_and_does_not_advance():
 
 
 def test_oversized_stored_turn_is_marked_and_tail_is_token_bounded():
-    rows = [HistoryTurn(position=i, role='user', content='pasted receipt ' * 1000) for i in range(1, 5)]
+    from anchor_ai.jailbreak_guard import MAX_BYTES
+    # Larger than the history allocation, but below the guard's input limit.
+    rows = [HistoryTurn(position=i, role='user', content='pasted receipt ' * 500) for i in range(1, 5)]
+    assert sum(len(row.content.encode()) for row in rows) + len('Update?') < MAX_BYTES
+    calls = []
     async def summarize(messages, limit):
+        calls.append(messages)
         return 'Receipt review remains open.'
     result = asyncio.run(assemble(contract(), 'Update?', rows, None, summarize))
     assert '[truncated]' in result.messages[3]['content']
     assert result.metrics['section_tokens']['history'] <= result.metrics['section_caps']['history']
     assert result.messages[3]['content'].count('user:') < 3
+    # This lesson intentionally rejects aggregate input above the guard limit.
+    oversized = [row.model_copy(update={'content': row.content * 2}) for row in rows]
+    assert sum(len(row.content.encode()) for row in oversized) > MAX_BYTES
+    calls.clear()
+    with pytest.raises(ContextError, match='jailbreak_detected'):
+        asyncio.run(assemble(contract(), 'Update?', oversized, None, summarize))
+    assert calls == []
 
 
 def test_oversized_summary_is_resummarized_before_history_fold():

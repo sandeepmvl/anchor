@@ -35,9 +35,14 @@ except ImportError:
 
 
 from anchor_ai.injection_filter import screen_customer, REFUSAL
+from anchor_ai.jailbreak_guard import evaluate as jailbreak_decision
+from anchor_ai.jailbreak_guard import REFUSAL as JAILBREAK_REFUSAL
 
 
 def require_safe_customer(value):
+    if jailbreak_decision(str(value)).refused:
+        raise HTTPException(status_code=422, detail='jailbreak_detected',
+                            headers={'X-Anchor-Jailbreak': 'refused'})
     safe, flags = screen_customer(str(value))
     if flags:
         raise HTTPException(status_code=422, detail='injection_detected',
@@ -95,8 +100,13 @@ async def bounded_agent(body: AgentRequest, request: Request,
     if runtime is None:
         raise HTTPException(status_code=503, detail='agent_not_configured')
     payload = body.model_dump()
+    if payload.get('operation', 'start') == 'start':
+        decision = jailbreak_decision(payload.get('message'))
+        if decision.refused:
+            return JSONResponse(content={'status': 'denied', 'reply': JAILBREAK_REFUSAL,
+                                         'calls': 0}, headers={'X-Anchor-Jailbreak': 'refused'})
     if isinstance(payload.get('message'), str):
-        payload['message'] = require_safe_customer(payload['message'])
+        payload['message'] = require_safe_customer(payload['message']) if payload['message'] else payload['message']
     try:
         return await runtime.execute(x_anchor_context, payload)
     except ContextError:
@@ -138,6 +148,9 @@ async def infer(body: InferRequest, request: Request,
     if not hmac.compare_digest(supplied, expected.encode('utf-8')):
         item.fail('service_auth_failed', 401)
         raise HTTPException(status_code=401, detail='service_auth_failed')
+    if jailbreak_decision(str(body.message), body.history or []).refused:
+        return JSONResponse(content={'reply': JAILBREAK_REFUSAL},
+                            headers={'X-Anchor-Jailbreak': 'refused'})
     safe, flags = screen_customer(str(body.message))
     if flags:
         return JSONResponse(content={'reply': REFUSAL},
@@ -478,7 +491,7 @@ async def multi_agent(body: AgentRequest, request: Request,
         raise HTTPException(status_code=403, detail='missing_execution_context')
     payload = body.model_dump()
     if isinstance(payload.get('message'), str):
-        payload['message'] = require_safe_customer(payload['message'])
+        payload['message'] = require_safe_customer(payload['message']) if payload['message'] else payload['message']
     try:
         with span('python.multi_agent', stage='orchestration'):
             return await run_milestone(getattr(app.state, 'multi_agent_runtime', None),

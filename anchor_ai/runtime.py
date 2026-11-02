@@ -181,6 +181,9 @@ class BoundedRuntime:
         req = AgentRequest.model_validate(request)
         if req.operation in ('approve', 'reject'):
             return self.review(token, req.run_id, req.operation == 'approve')
+        from anchor_ai.jailbreak_guard import evaluate, REFUSAL
+        if req.operation == 'start' and evaluate(req.message).refused:
+            return dict(status='denied', reply=REFUSAL, calls=0)
         with self.locked():
             s = self.load(scope, req.run_id)
             if s is None:
@@ -210,6 +213,9 @@ class BoundedRuntime:
                     raise ValueError('run_arguments_changed')
             if s['status'] in TERMINAL or s['status'] == 'awaiting_approval':
                 return s
+            if evaluate(s['message']).refused:
+                s['reply'] = REFUSAL
+                return self.stop(s, 'denied', 'jailbreak_detected')
             self.event(s, 'memory_read', records=len(s['memory']))
             self.save(s)
             ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'], 'parent_span_id': None}
@@ -383,6 +389,9 @@ class SemanticAnswerRuntime:
         if (identity is None or type(identity.tenant_id) is not int
                 or identity.tenant_id <= 0 or not identity.role):
             raise ContextError('cache_identity_rejected')
+        from anchor_ai.jailbreak_guard import evaluate, REFUSAL
+        if evaluate(query).refused:
+            return REFUSAL
         def fresh():
             s = self.resolve(identity, query, path)
             if (not isinstance(s, Snapshot) or s.tenant_id != identity.tenant_id

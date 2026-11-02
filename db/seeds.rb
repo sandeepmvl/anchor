@@ -7,6 +7,10 @@
   PromptRegistry.publish(version, attributes)
 end
 
+if ENV['ANCHOR_HARDENED_PROMPT_CANDIDATE']
+  PromptRegistry.harden_active(version: ENV.fetch('ANCHOR_HARDENED_PROMPT_CANDIDATE'))
+end
+
 unless Rails.env.production?
   baseline = Rails.root.join('eval/datasets/golden_v1.jsonl')
   File.foreach(baseline) do |line|

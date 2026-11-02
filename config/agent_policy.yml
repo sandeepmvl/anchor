@@ -47,3 +47,8 @@ tenants:
 incident:
   blocked_ticket_action: human_handoff
   context_fields: [message, history, evidence, proposed_action]
+# Jailbreak screening runs before agent execution, including resumed messages.
+# Its fixed byte/turn limits and ambiguous extraction fail closed.
+# Hand-rolled policy: auditable and cheap, but narrow pattern coverage.
+# No screening result grants authority or replaces document quarantine.
+# A longer hardened prompt must still fit the existing context budget.
