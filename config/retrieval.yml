@@ -79,6 +79,11 @@ hybrid:
   deadline_seconds: 2
   fixture_env: ANCHOR_HYBRID_FIXTURE
   url: http://127.0.0.1:8000/v1/retrieve/hybrid
+  reranking:
+    provider_env: ANCHOR_RERANKER
+    candidate_limit: 20
+    batch_size: 20
+    max_length: 256
 
 query_analysis:
   provider_env: ANCHOR_QUERY_PROVIDER

@@ -40,7 +40,15 @@ class RagRuntime:
         started = time.monotonic()
         if len(question.encode('utf-8')) > 1800:
             raise ValueError('current_question_budget_exceeded')
-        hits = self.retriever.search(question, k)
+        if hasattr(self.retriever, 'retrieve'):
+            retrieved = await self.retriever.retrieve(question, k)
+            hits = retrieved['hits']
+            retrieval_trace = dict(tenant_id=retrieved['tenant_id'],
+                                   generation_id=retrieved['generation_id'],
+                                   chunk_ids=[hit['id'] for hit in hits])
+        else:
+            hits = self.retriever.search(question, k)
+            retrieval_trace = self.retriever.last_trace
         evidence = pack_evidence(hits, self.evidence_budget)
         messages = [dict(role='system', content=INSTRUCTION),
                     dict(role='user', content=json.dumps(
@@ -67,7 +75,7 @@ class RagRuntime:
                 pass
         ended = time.monotonic()
         trace = dict(event='dense_rag', request_id=request_id, trace_id=trace_id,
-                     **self.retriever.last_trace,
+                     **retrieval_trace,
                      evidence_chunk_ids=sorted(allowed),
                      evidence_bytes=len(json.dumps(evidence, ensure_ascii=False).encode('utf-8')),
                      citations=result['citations'], abstained=result['abstained'],
@@ -123,6 +131,9 @@ def fixture_hybrid_runtime(tenant_id):
 def published_hybrid_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
                              **settings):
     from anchor_ai.hybrid_retriever import HybridRuntime
+    if 'reranker' not in settings:
+        from anchor_ai.reranking import make_reranker
+        settings['reranker'] = make_reranker(hybrid_settings().get('reranking', {}))
     return HybridRuntime(tenant_id, acquire_snapshot, dense_search, sparse_search, **settings)
 
 
@@ -159,3 +170,12 @@ def fixture_analyzed_runtime(tenant_id):
         **{key: settings[key] for key in ('candidate_depth', 'rrf_k', 'deadline_seconds')})
     runtime.fixture_client = client
     return runtime
+
+
+def published_hybrid_rag_runtime(tenant_id, acquire_snapshot, dense_search, sparse_search,
+                                 client=None, emit=None, evidence_budget=600, **settings):
+    from anchor_ai.llm_client import LlmClient
+    hybrid = published_hybrid_runtime(tenant_id, acquire_snapshot,
+                                     dense_search, sparse_search, **settings)
+    generation = client if client is not None else ExistingClientAdapter(LlmClient())
+    return RagRuntime(hybrid, generation, emit=emit, evidence_budget=evidence_budget)

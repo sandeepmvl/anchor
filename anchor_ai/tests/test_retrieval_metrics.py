@@ -30,15 +30,19 @@ def test_duplicate_document_hits_are_collapsed_before_cutoff():
     assert repeated == unique
     assert repeated['recall@5'] == 1
     assert repeated['rr'] == 0.5
+    assert repeated['precision@5'] == pytest.approx(2 / 5)
 
 
 def test_missing_results_and_short_lists():
     labels = dict(A=3, B=2, X=0)
-    assert score([], labels) == {'recall@5': 0, 'rr': 0, 'nDCG@5': 0}
+    assert score([], labels) == {'recall@5': 0, 'rr': 0, 'nDCG@5': 0,
+                                 'precision@5': 0}
     assert score(['X'], labels) == score([], labels)
     partial = score(['A'], labels)
     assert partial['recall@5'] == 0.5
     assert partial['nDCG@5'] == pytest.approx(7 / (7 + 3 / log2(3)))
+    assert partial['precision@5'] == pytest.approx(1 / 5)
+    assert score(['A', 'B'], labels)['precision@5'] == pytest.approx(2 / 5)
 
 
 def test_mrr_uses_full_supplied_document_list():

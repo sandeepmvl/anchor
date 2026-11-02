@@ -51,7 +51,7 @@ class Snapshot:
 
 class HybridRuntime:
     def __init__(self, tenant_id, acquire_snapshot, dense_search, sparse_search,
-                 candidate_depth=5, rrf_k=60, deadline_seconds=2):
+                 candidate_depth=5, rrf_k=60, deadline_seconds=2, reranker=None):
         if type(candidate_depth) is not int or not 1 <= candidate_depth <= 100:
             raise ValueError('invalid_candidate_depth')
         rrf_fuse([], [], rrf_k)
@@ -63,6 +63,7 @@ class HybridRuntime:
         self.candidate_depth = candidate_depth
         self.rrf_k = rrf_k
         self.deadline_seconds = deadline_seconds
+        self.reranker = reranker
 
     async def retrieve(self, query, top_k=3, *, snapshot=None):
         if not query.strip() or len(query.encode('utf-8')) > 1800:
@@ -83,7 +84,9 @@ class HybridRuntime:
                 with span('python.retrieval.' + name, tenant_id=self.tenant_id,
                           generation_id=snapshot.generation_id, stage='retrieval'):
                     # The closure retains this snapshot even if the caller times out.
-                    hits = list(search(query, snapshot, self.candidate_depth))
+                    depth = (max(self.candidate_depth, self.reranker.candidate_limit)
+                             if self.reranker is not None else self.candidate_depth)
+                    hits = list(search(query, snapshot, depth))
                     for hit in hits:
                         if (hit.get('tenant_id') != self.tenant_id
                                 or hit.get('generation_id') != snapshot.generation_id
@@ -103,11 +106,29 @@ class HybridRuntime:
             begin = time.monotonic()
             with span('python.retrieval.fusion', tenant_id=self.tenant_id,
                       generation_id=snapshot.generation_id, stage='retrieval'):
-                fused = rrf_fuse(dense[0], sparse[0], self.rrf_k)[:top_k]
-                hits = [dict(row, tenant_id=self.tenant_id,
-                             text=canonical[row['id']]['text']) for row in fused]
+                limit = self.reranker.candidate_limit if self.reranker is not None else top_k
+                fused = rrf_fuse(dense[0], sparse[0], self.rrf_k)[:limit]
+                if self.reranker is None:
+                    hits = [dict(row, tenant_id=self.tenant_id,
+                                 text=canonical[row['id']]['text']) for row in fused]
+                else:
+                    hits = [dict(canonical[row['id']], **row,
+                                 generation_id=snapshot.generation_id) for row in fused]
+            fusion_ms = (time.monotonic() - begin) * 1000
+            if self.reranker is not None:
+                remaining = self.deadline_seconds - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError('rerank_deadline_exceeded')
+                with span('python.retrieval.rerank', tenant_id=self.tenant_id,
+                          generation_id=snapshot.generation_id, stage='retrieval') as item:
+                    begin = time.monotonic()
+                    item.set(pair_count=len(hits))
+                    hits = await asyncio.wait_for(asyncio.to_thread(
+                        self.reranker.rerank, query, hits), remaining)
+                    item.set(rerank_ms=(time.monotonic() - begin) * 1000)
+                hits = hits[:top_k]
             summary.set(dense_ms=dense[1], sparse_ms=sparse[1],
-                        fusion_ms=(time.monotonic() - begin) * 1000,
+                        fusion_ms=fusion_ms,
                         total_ms=(time.monotonic() - started) * 1000,
                         chunk_ids=[row['id'] for row in hits])
             return dict(tenant_id=self.tenant_id, generation_id=snapshot.generation_id,

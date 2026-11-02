@@ -165,3 +165,4 @@ FIELDS.update({'dense_ms', 'sparse_ms', 'fusion_ms', 'total_ms'})
 ERRORS.add('retrieval_deadline')
 FIELDS.update({'analysis_version', 'analysis_calls', 'subquery_count',
                'analysis_fallback', 'analysis_reason'})
+FIELDS.update({'pair_count', 'rerank_ms'})

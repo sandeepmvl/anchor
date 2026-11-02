@@ -28,7 +28,8 @@ def score(ranked, judgments, k=5):
                 for rank, grade in enumerate(
                     sorted(judgments.values(), reverse=True)[:k], 1))
     return {'recall@5' if k == 5 else f'recall@{k}': recall,
-            'rr': rr, 'nDCG@5' if k == 5 else f'nDCG@{k}': dcg / ideal}
+            'rr': rr, 'nDCG@5' if k == 5 else f'nDCG@{k}': dcg / ideal,
+            f'precision@{k}': len(set(top) & relevant) / k}
 
 
 def mean_scores(rows):
