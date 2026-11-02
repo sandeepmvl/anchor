@@ -112,10 +112,77 @@ def lora_forward(weight, a, b, x, alpha):
     return np.matmul(weight, x) + (alpha / a.shape[0]) * np.matmul(b, np.matmul(a, x))
 
 
+def estimate_training_memory(parameters, adapter_parameters, mode,
+                             activation_bytes, runtime_overhead_bytes,
+                             budget_bytes, double_quant=True):
+    """Planning model, not allocator measurements; all quantities are bytes."""
+    values = (parameters, adapter_parameters, activation_bytes,
+              runtime_overhead_bytes, budget_bytes)
+    if any(type(v) is not int or v < 1 for v in values):
+        raise ValueError('invalid_memory_assumption')
+    if mode not in ('fp16', '8-bit', 'NF4') or type(double_quant) is not bool:
+        raise ValueError('invalid_quantization_mode')
+    blocks = math.ceil(parameters / 64)
+    metadata = 0
+    if mode == '8-bit':
+        metadata = blocks * 4
+    elif mode == 'NF4':
+        metadata = blocks + math.ceil(blocks / 256) * 4 if double_quant else blocks * 4
+    components = {
+        'base_weights': math.ceil(parameters * {'fp16': 2, '8-bit': 1, 'NF4': 0.5}[mode]),
+        'quantization_metadata': metadata,
+        'adapters': adapter_parameters * 2,
+        'gradients': adapter_parameters * 2,
+        'optimizer_state': adapter_parameters * 8,
+        'activation_allowance': activation_bytes,
+        'runtime_overhead': runtime_overhead_bytes,
+    }
+    total = sum(components.values())
+    accepted = total <= budget_bytes
+    return {'mode': mode, 'components_bytes': components,
+            'estimated_total_bytes': total, 'budget_bytes': budget_bytes,
+            'accepted': accepted,
+            'decision': 'estimated_feasible' if accepted else 'rejected_memory_budget',
+            'warning': None if accepted else 'Estimated total exceeds selected hardware budget',
+            'evidence_status': 'estimate_not_gpu_run',
+            'training_launched': False, 'checkpoint_created': False,
+            'assumptions': '2-byte adapters/gradients; two fp32 AdamW moments; no base gradients; '
+                           'illustrative blockwise int8, not LLM.int8 outlier accounting; '
+                           'allowances must be validated against measured peaks'}
+
+
+def quantized_training_preflight(spec, adapter=None):
+    request = spec.get('quantized_training')
+    if request is None:
+        return None
+    adapter = validate_adapter(spec) if adapter is None else adapter
+    if adapter is None:
+        raise ValueError('quantized_training_requires_adapter')
+    bnb = request['bitsandbytes']
+    if (bnb['load_in_4bit'] is not True or bnb['bnb_4bit_quant_type'] != 'nf4'
+            or type(bnb['bnb_4bit_use_double_quant']) is not bool
+            or bnb['bnb_4bit_compute_dtype'] not in ('bfloat16', 'float32', 'float16')):
+        raise ValueError('invalid_nf4_configuration')
+    comparisons = {
+        mode: estimate_training_memory(
+            spec['settings']['parameter_count'], adapter['trainable_parameters'], mode,
+            request['activation_allowance_bytes'], request['runtime_overhead_bytes'],
+            request['gpu_budget_bytes'], bnb['bnb_4bit_use_double_quant'])
+        for mode in ('fp16', '8-bit', 'NF4')
+    }
+    return {**comparisons['NF4'], 'comparisons': comparisons,
+            'bitsandbytes': dict(bnb), 'adapter': adapter,
+            'hardware': request['hardware'],
+            'precision_requirement': 'Validate compute and reduction support on the selected GPU; '
+                                     'this offline check does not probe hardware',
+            'training_options': request['training_options']}
+
+
 def experiment(policy=None):
     policy = load_policy() if policy is None else policy
     spec = policy['sft']
     adapter = validate_adapter(spec)
+    preflight = quantized_training_preflight(spec, adapter)
     rows = spec['recorded_rows']
     ids = {row['id']: row for row in rows}
     if len(ids) != len(rows):
@@ -156,8 +223,10 @@ def experiment(policy=None):
     contract.update(lineage=lineage, loss_digest=selection['loss_digest'])
     if adapter is not None:
         contract.update(adapter=adapter)
+    if preflight is not None:
+        contract.update(proposed_quantized_training=spec['quantized_training'])
     settings = spec['settings']
-    return {'candidate': spec['candidate'], 'experiment_id': digest(contract),
+    result = {'candidate': spec['candidate'], 'experiment_id': digest(contract),
             'evidence_status': RECORDED, 'lineage': lineage,
             'counts': {key: len(value) for key, value in splits.items()},
             'train_sources': {source: sum(r['source'] == source for r in splits['train'])
@@ -169,6 +238,9 @@ def experiment(policy=None):
             'tokenized': False, 'training_launched': False,
             'checkpoint_created': False, 'training_release': False,
             'split_audit': 'family_and_exact_checks_only; near-duplicate_review_required'}
+    if preflight is not None:
+        result['qlora_preflight'] = preflight
+    return result
 
 
 def recorded_evaluation(manifest, policy=None):
