@@ -26,12 +26,21 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(application):
     from eval.eval_endpoint import ReleaseRuntime
+    from anchor_ai.tools import registry_for
+    from anchor_ai.mcp import McpClient
+    mcp_client = (McpClient(os.environ.get('ANCHOR_MCP_SERVER_ID', 'local_orders'))
+                  if os.environ.get('ANCHOR_MCP_ENABLED') == '1' else None)
+    # Supply this factory to the existing bounded runtime's registry dependency.
+    # Its backend must still implement authenticated tenant/order ownership.
+    application.state.agent_tool_registry_factory = lambda backend: registry_for(
+        backend, mcp_client=mcp_client)
     factory = getattr(application.state, 'rag_release_runtime_factory', ReleaseRuntime)
     application.state.rag_release_runtime = factory()
     try:
         yield
     finally:
         del application.state.rag_release_runtime
+        del application.state.agent_tool_registry_factory
 
 
 app = FastAPI(lifespan=lifespan)
@@ -128,8 +137,7 @@ async def structured_reply(
     try:
         return await LlmClient().complete_structured(body.message)
     except InvalidModelOutput as error:
-        item.set(stage='validation')
-        item.fail('invalid_model_output', 422)
+        item.fail('validation_failed', 422)
         return JSONResponse(status_code=422, content={'detail': error.detail()})
     except ProviderError as error:
         item.fail(error.code, error.status)

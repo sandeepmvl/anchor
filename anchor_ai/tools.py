@@ -23,6 +23,7 @@ class Tool:
     run: Callable
     consequential: bool = False
     authorize: Callable | None = None
+    external_server: str | None = None
 
 
 def normalize(api, response):
@@ -59,7 +60,10 @@ def definitions(registry, api='chat'):
     for name, tool in registry.items():
         fields = {'name': name, 'description': tool.description,
                   'parameters': tool.arguments.model_json_schema()}
-        if api == 'chat':
+        if api == 'mcp':
+            result.append({'name': name, 'description': tool.description,
+                           'inputSchema': fields['parameters']})
+        elif api == 'chat':
             result.append({'type': 'function', 'function': dict(fields, strict=True)})
         elif api == 'responses':
             result.append(dict(fields, type='function', strict=True))
@@ -138,8 +142,8 @@ class MemoryOrderBackend:
             return result
 
 
-def registry_for(backend):
-    return {
+def registry_for(backend, *, mcp_client=None):
+    registry = {
         'lookup_order': Tool('Read order details; does not change the order.',
                              OrderToolArguments, OrderToolResult, backend.lookup_order,
                              authorize=backend.owns),
@@ -150,6 +154,7 @@ def registry_for(backend):
                              RefundArguments, IssuedRefundResult, backend.issue_refund,
                              consequential=True, authorize=backend.owns),
     }
+    return mcp_client.wrap(registry) if mcp_client is not None else registry
 
 
 def safe_result(model):
@@ -180,6 +185,8 @@ async def _dispatch_validated(call, registry, scope, *, idempotency_key=None):
             return failure('invalid_arguments')
         try:
             extra = {'idempotency_key': idempotency_key} if tool.consequential else {}
+            if tool.external_server is not None:
+                extra['call_id'] = call.call_id
             raw_result = await tool.run(scope=scope, **arguments.model_dump(), **extra)
             validated = tool.result.model_validate(raw_result)
             data = safe_result(validated)
@@ -245,8 +252,9 @@ class ToolReplayClient(LlmClient):
         return message
 
 
-async def run_conversation(client, registry, scope, *, run=None):
-    history = [{'role': 'user', 'content': 'Can I refund order A100?'}]
+async def run_conversation(client, registry, scope, *, run=None,
+                           message='Can I refund order A100?'):
+    history = [{'role': 'user', 'content': message}]
     batches = []
     state = run_for(scope, run)
     for _ in range(6):

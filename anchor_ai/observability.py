@@ -217,3 +217,19 @@ def emit_react(event, emit, **metadata):
         for key in ('request_id', 'trace_id', 'span_id', 'parent_span_id'):
             record[key] = item.record[key]
         emit(record)
+
+
+FIELDS.add('mcp_server_id')
+ERRORS.add('mcp_rejected')
+
+
+@contextmanager
+def mcp_span(scope, server_id, call_id):
+    import hashlib
+    identity = safe_id(server_id)
+    if identity is None:
+        raise ValueError('invalid configured server identity')
+    with span('python.mcp', stage='tool', tenant_id=scope.tenant_id,
+              conversation_id=scope.conversation_id, mcp_server_id=identity,
+              tool_call_fingerprint=hashlib.sha256(call_id.encode()).hexdigest()) as item:
+        yield item

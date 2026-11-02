@@ -1,0 +1,19 @@
+servers:
+  local_orders:
+    endpoint: http://127.0.0.1:4000/mcp
+    development_loopback: true
+    protocol_version: '2025-06-18'
+    timeout_seconds: 2
+    max_response_bytes: 65536
+    tools:
+      lookup_order: lookup_order
+      issue_refund: issue_refund
+    tenants:
+      1:
+        credential_env: ANCHOR_MCP_TENANT_1_TOKEN
+      2:
+        credential_env: ANCHOR_MCP_TENANT_2_TOKEN
+# Production: use an exact HTTPS endpoint, distinct per-tenant secrets,
+# and an egress policy that restricts destinations and DNS resolution.
+# Do not accept endpoint URLs or credential references from model output.
+# Discovery never adds a tool to this mapping.
