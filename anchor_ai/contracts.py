@@ -53,3 +53,9 @@ class InferResponse(BaseModel):
     usage: Usage
     finish_reason: str
     attempts: int = Field(ge=1)
+
+
+class TriageLabels(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    category: Literal['billing', 'technical', 'account', 'order']
+    urgency: Literal['P1', 'P2', 'P3']

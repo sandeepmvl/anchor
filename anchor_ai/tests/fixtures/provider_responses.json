@@ -13,5 +13,6 @@
   ],
   "5xx": [{"status":503,"text":"Service unavailable"}],
   "timeout": [{"exception":"timeout"},{"status":200,"body":{"choices":[{"message":{"content":"Recovered reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}}],
-  "connection": [{"exception":"connection"},{"status":200,"body":{"choices":[{"message":{"content":"Recovered reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}}]
+  "connection": [{"exception":"connection"},{"status":200,"body":{"choices":[{"message":{"content":"Recovered reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}}],
+  "triage": [{"status":200,"body":{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":12,"total_tokens":112}}}]
 }

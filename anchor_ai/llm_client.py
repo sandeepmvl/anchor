@@ -6,12 +6,14 @@ import time
 import httpx
 
 try:
-    from .contracts import InferResponse, Usage
+    from .contracts import InferResponse, Usage, TriageLabels
+    from .prompts import render
     from .provider import (ProviderError, ReplayProvider, LiveProvider,
                            configured_provider, classify, safe_retry_after)
     from .observability import span, tokens_from_usage, estimate, PRICE_VERSION
 except ImportError:
-    from contracts import InferResponse, Usage
+    from contracts import InferResponse, Usage, TriageLabels
+    from prompts import render
     from provider import (ProviderError, ReplayProvider, LiveProvider,
                           configured_provider, classify, safe_retry_after)
     from observability import span, tokens_from_usage, estimate, PRICE_VERSION
@@ -38,6 +40,20 @@ class LlmClient:
 
     def complete(self, prompt, system=None, max_tokens=256):
         return asyncio.run(self.complete_result(prompt, system, max_tokens)).reply
+
+    def complete_triage(self, ticket, *, variant='zero_shot', fixture_id=None):
+        prompt = render(variant, ticket)
+        original = self.provider
+        try:
+            if isinstance(original, ReplayProvider):
+                self.provider = ReplayProvider(task='triage', variant=variant,
+                                               fixture_id=fixture_id)
+            result = asyncio.run(self.complete_result(prompt))
+            if result.finish_reason != 'stop':
+                raise ProviderError('invalid_triage_response', attempts=result.attempts)
+            return TriageLabels.model_validate_json(result.reply)
+        finally:
+            self.provider = original
 
     async def complete_result(self, prompt, system=None, max_tokens=256):
         self.attempts = 0

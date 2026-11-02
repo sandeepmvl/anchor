@@ -9,7 +9,14 @@ from typing import Protocol
 
 import httpx
 
+try:
+    from .prompts import render
+except ImportError:
+    from prompts import render
+
 FIXTURES = Path(__file__).parent / "tests/fixtures/provider_responses.json"
+TRIAGE_TICKETS = FIXTURES.with_name('triage_tickets.json')
+TRIAGE_RESPONSES = FIXTURES.with_name('triage_responses.json')
 
 
 class ProviderError(Exception):
@@ -32,14 +39,37 @@ class Provider(Protocol):
 
 
 class ReplayProvider:
-    def __init__(self, scenario="200"):
-        self.sequence = json.loads(FIXTURES.read_text())[scenario]
+    def __init__(self, scenario="200", *, task=None, variant=None, fixture_id=None):
+        self.expected_messages = None
+        if task is not None:
+            try:
+                if task != 'triage':
+                    raise KeyError(task)
+                tickets = json.loads(TRIAGE_TICKETS.read_text())
+                ticket = next(item for item in tickets if item['id'] == fixture_id)
+                labels = json.loads(TRIAGE_RESPONSES.read_text())[task][variant][fixture_id]
+                self.expected_messages = [
+                    {'role': 'user', 'content': render(variant, ticket['ticket'])}
+                ]
+                self.sequence = json.loads(FIXTURES.read_text())['triage']
+                self.sequence[0]['body']['choices'][0]['message']['content'] = json.dumps(labels)
+            except (KeyError, StopIteration, ValueError, TypeError):
+                raise ProviderError('replay_miss') from None
+        else:
+            self.sequence = json.loads(FIXTURES.read_text())[scenario]
         self.requests = []
 
     def key(self):
         return "offline-key"
 
     def send(self, request):
+        if self.expected_messages is not None:
+            try:
+                matches = json.loads(request.content)['messages'] == self.expected_messages
+            except (ValueError, KeyError, TypeError):
+                matches = False
+            if not matches:
+                raise ProviderError('replay_miss')
         index = min(len(self.requests), len(self.sequence) - 1)
         self.requests.append(request)
         item = self.sequence[index]

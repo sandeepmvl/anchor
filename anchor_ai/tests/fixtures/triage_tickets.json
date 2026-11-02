@@ -1,0 +1,7 @@
+[
+  {"id":"t1","ticket":"Where is my order? Please share its shipping status.","category":"order","urgency":"P3"},
+  {"id":"t2","ticket":"I was charged twice for this month's subscription.","category":"billing","urgency":"P2"},
+  {"id":"t3","ticket":"Checkout throws a 500 for every customer. Also update our billing email.","category":"technical","urgency":"P1"},
+  {"id":"t4","ticket":"I cannot log in to my account and I am blocked.","category":"account","urgency":"P2"},
+  {"id":"t5","ticket":"My account will not let me sign in, so I cannot access it.","category":"account","urgency":"P2"}
+]

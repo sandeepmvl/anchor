@@ -1,0 +1,7 @@
+{
+  "triage": {
+    "zero_shot": {"t1":{"category":"order","urgency":"P3"},"t2":{"category":"billing","urgency":"P2"},"t3":{"category":"account","urgency":"P3"},"t4":{"category":"account","urgency":"P2"},"t5":{"category":"technical","urgency":"P3"}},
+    "few_shot": {"t1":{"category":"order","urgency":"P3"},"t2":{"category":"billing","urgency":"P2"},"t3":{"category":"technical","urgency":"P2"},"t4":{"category":"account","urgency":"P2"},"t5":{"category":"account","urgency":"P2"}},
+    "cot": {"t1":{"category":"order","urgency":"P3"},"t2":{"category":"billing","urgency":"P2"},"t3":{"category":"technical","urgency":"P1"},"t4":{"category":"account","urgency":"P2"},"t5":{"category":"account","urgency":"P2"}}
+  }
+}
