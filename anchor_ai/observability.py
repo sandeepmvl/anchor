@@ -708,3 +708,19 @@ def emit_provider_prefix(evidence, prompt):
             'answer_cache_hit', 'provider_called', 'ttl_seconds')})
         event.set(prefix_identity=prompt.prefix_identity,
                   prefix_layout_version=prompt.prefix_version)
+
+
+def batch_measurement(record):
+    """Validate content-free scheduler measurements without inheriting a caller span."""
+    if set(record) != {'batch_size', 'queue_ms', 'outstanding'}:
+        raise ValueError('unsafe_batch_telemetry')
+    for name in ('batch_size', 'outstanding'):
+        if type(record[name]) is not int or record[name] < 1:
+            raise ValueError('unsafe_batch_telemetry')
+    waits = record['queue_ms']
+    if (not isinstance(waits, list) or len(waits) != record['batch_size']
+            or any(type(v) not in (int, float) or not math.isfinite(v) or v < 0
+                   for v in waits)):
+        raise ValueError('unsafe_batch_telemetry')
+    return dict(batch_size=record['batch_size'], queue_ms=list(waits),
+                outstanding=record['outstanding'])

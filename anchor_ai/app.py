@@ -48,9 +48,16 @@ async def lifespan(application):
         backend, mcp_client=mcp_client)
     factory = getattr(application.state, 'rag_release_runtime_factory', ReleaseRuntime)
     application.state.rag_release_runtime = factory()
+    batch_factory = getattr(application.state, 'batch_runtime_factory', None)
+    if batch_factory is not None:
+        application.state.batch_runtime = batch_factory()
     try:
         yield
     finally:
+        batch_runtime = getattr(application.state, 'batch_runtime', None)
+        if batch_runtime is not None:
+            await batch_runtime.close()
+            del application.state.batch_runtime
         del application.state.rag_release_runtime
         del application.state.agent_tool_registry_factory
 
@@ -373,7 +380,7 @@ async def bounded_rag(
         factory = fixture_runtime
     item.set(stage='retrieval')
     try:
-        runtime = factory(tenant_id=body.tenant_id, emit=emit_retrieval)
+        runtime = factory(tenant_id=body.tenant_id)
         if runtime.retriever.tenant_id != body.tenant_id:
             raise ValueError('runtime_scope_mismatch')
         return await runtime.answer(body.message, body.top_k, mode=body.mode,
@@ -558,3 +565,7 @@ async def public_faq_answer(token, query, *, path, runtime=None):
     if runtime is None:
         raise HTTPException(status_code=503, detail='semantic_answer_not_configured')
     return await runtime.answer(token, query, path=path)
+
+
+from anchor_ai.batching import register_batch_routes
+register_batch_routes(app)

@@ -489,3 +489,9 @@ class SyntheticPrefixProvider:
 
     def client(self):
         return httpx.AsyncClient(transport=httpx.MockTransport(self.send), trust_env=False)
+
+
+def offline_batch_provider():
+    """Explicit offline bulk adapter; never selects a live provider implicitly."""
+    from anchor_ai.batching import OfflineBatchProvider
+    return OfflineBatchProvider()

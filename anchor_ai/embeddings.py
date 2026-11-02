@@ -132,3 +132,14 @@ def cosine(a, b):
     if denominator == 0:
         raise ValueError('zero vectors have no cosine direction')
     return dot(a, b) / denominator
+
+
+async def embed_document_batched(runtime, token, *, tenant_id, document_id,
+                                  text, model, revision, input_type='document'):
+    """Ingestion seam; runtime verifies tenant authority before queuing text."""
+    from anchor_ai.batching import BatchEnvelope, BatchItem
+    item = BatchItem(request_id=str(document_id), tenant_id=tenant_id,
+                     operation='embedding', model=model, revision=revision,
+                     settings={'input_type': input_type}, text=text)
+    result = await runtime.execute(token, BatchEnvelope(items=[item]))
+    return result['items'][0]

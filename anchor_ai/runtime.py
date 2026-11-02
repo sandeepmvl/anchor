@@ -410,3 +410,12 @@ class SemanticAnswerRuntime:
         if eligible and fresh() == snapshot:
             self.cache.store(snapshot, query, vector, generated)
         return generated.text
+
+
+def create_batch_runtime(*, adapter, verify, path, config_path='config/batching.yml',
+                         emit=None, production=False, evidence=None, tokenizer=None):
+    """Composition seam; authorization and production evidence remain mandatory."""
+    from anchor_ai.batching import BatchRuntime, Scheduler, configuration
+    scheduler = Scheduler(adapter, configuration(config_path), emit=emit)
+    return BatchRuntime(scheduler, verify=verify, path=path, production=production,
+                        evidence=evidence, tokenizer=tokenizer)

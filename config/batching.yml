@@ -1,0 +1,10 @@
+batching:
+  size: 8
+  window_ms: 10
+  max_pending: 128
+  provider_concurrency: 2
+  unit_cap: 256
+  max_input_bytes: 4096
+  call_timeout_ms: 1000
+  record_content: false
+  budget_basis: whitespace_test_units
