@@ -104,8 +104,8 @@ class HybridHit(BaseModel):
     tenant_id: int = Field(gt=0)
     text: str
     score: float = Field(ge=0, allow_inf_nan=False)
-    dense: float = Field(ge=0, allow_inf_nan=False)
     sparse: float = Field(ge=0, allow_inf_nan=False)
+    dense: float = Field(ge=0, allow_inf_nan=False)
 
 class HybridResponse(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
@@ -252,3 +252,41 @@ class ReActContent(BaseModel):
         'Policy declared the accumulated evidence sufficient.',
     ]
     final: DenseRagResponse | None = None
+
+
+class AccountPlanStep(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    action_id: str = Field(pattern=r'^[a-z][a-z0-9_-]{0,63}$')
+    tool: str = Field(min_length=1, max_length=64)
+    requires: list[str] = Field(default_factory=list, max_length=6)
+    address: str | None = Field(default=None, min_length=1, max_length=300)
+
+    @model_validator(mode='after')
+    def arguments(self):
+        if (self.tool == 'update_address') != (self.address is not None):
+            raise ValueError('invalid_account_arguments')
+        if len(set(self.requires)) != len(self.requires):
+            raise ValueError('duplicate_prerequisite')
+        return self
+
+
+class AccountPlan(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    steps: list[AccountPlanStep] = Field(min_length=1, max_length=6)
+
+
+class AccountObservation(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    ok: bool
+    account: Literal['open', 'closed'] | None = None
+    receipt: str | None = None
+    undo_token: str | None = None
+    reason: str | None = None
+
+
+class AccountExecutionScope(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    customer_id: str = Field(min_length=1, max_length=100)
+    role: str = Field(min_length=1, max_length=100)

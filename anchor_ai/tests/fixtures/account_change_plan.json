@@ -1,0 +1,20 @@
+{
+  "ticket": "Change my address to 10 Harbor Road.",
+  "initial": {
+    "steps": [
+      {"action_id": "verify", "tool": "verify_identity", "requires": []},
+      {
+        "action_id": "update",
+        "tool": "update_address",
+        "requires": ["verify"],
+        "address": "10 Harbor Road"
+      },
+      {"action_id": "confirm", "tool": "confirm_change", "requires": ["update"]}
+    ]
+  },
+  "replacement": {
+    "steps": [
+      {"action_id": "blocked", "tool": "report_blocked", "requires": []}
+    ]
+  }
+}

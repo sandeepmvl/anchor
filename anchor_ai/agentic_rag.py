@@ -293,4 +293,7 @@ def build_agent_runtime(retriever, *, strategy='agentic', **kwargs):
     if strategy == 'react':
         from anchor_ai.react import ReActRuntime
         return ReActRuntime(retriever, **kwargs)
+    if strategy == 'plan_execute':
+        from anchor_ai.planning import PlanExecuteRuntime
+        return PlanExecuteRuntime(retriever, **kwargs)
     raise ValueError('invalid_agent_strategy')

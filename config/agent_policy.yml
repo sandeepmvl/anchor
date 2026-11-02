@@ -9,20 +9,27 @@ tools:
   lookup_order: {mode: read, cost_units: 1}
   check_refund: {mode: read, cost_units: 1}
   issue_refund: {mode: approval, cost_units: 3}
+  verify_identity: {mode: read, cost_units: 1}
+  update_address: {mode: approval, cost_units: 3}
+  confirm_change: {mode: read, cost_units: 1}
+  report_blocked: {mode: read, cost_units: 1}
 tenants:
   1:
     refund_ceiling_cents: 500
     roles:
-      support_reader: [retrieve, lookup_order, check_refund]
-      support_supervisor: [retrieve, lookup_order, check_refund, issue_refund]
+      support_reader: [retrieve, lookup_order, check_refund, verify_identity, report_blocked]
+      support_supervisor: [retrieve, lookup_order, check_refund, issue_refund, verify_identity, update_address, confirm_change, report_blocked]
   2:
     refund_ceiling_cents: 200
     roles:
-      support_reader: [retrieve, lookup_order, check_refund]
-      support_supervisor: [retrieve, lookup_order, check_refund]
+      support_reader: [retrieve, lookup_order, check_refund, verify_identity, report_blocked]
+      support_supervisor: [retrieve, lookup_order, check_refund, verify_identity, report_blocked]
 # Unknown tenants, roles, and tool names fail closed.
 # Confirmation comes from trusted application code, never model arguments.
 # Budgets belong to one run and are shared by parallel dispatches.
 # Reservations are not refunded after backend errors.
 # A production financial adapter must persist idempotency records.
 # Monetary model-provider accounting is outside this fixture policy.
+# Planning uses the same tools and tenant roles, not a separate policy namespace.
+# The controller caps plans at six steps and replacement plans at one.
+# Successful address writes require an authoritative receipt and undo token.
