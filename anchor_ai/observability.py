@@ -20,16 +20,24 @@ SINK = lambda record: LOGGER.info(json.dumps(record, separators=(',', ':')))
 # USD / million tokens. Verify against https://openai.com/api/pricing/ before live use.
 PRICE_VERSION = 'gpt-4o-mini-standard-2024-07'
 PRICES = {'gpt-4o-mini': {'input': '0.15', 'cached_input': '0.075',
-                         'cache_write_input': '0', 'output': '0.60'}}
+                         'cache_write_input': '0', 'output': '0.60'},
+          # Illustrative fixture rates only. This is not a live model price.
+          'anchor-reasoning-replay': {'input': '1.25', 'cached_input': '0',
+                                     'cache_write_input': '0', 'output': '10'}}
 FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model',
           'response_model', 'provider_request_id', 'tokens', 'cost_estimate',
-          'currency', 'cost_basis', 'price_version', 'attempts'}
+          'currency', 'cost_basis', 'price_version', 'attempts',
+          'reasoning_setting', 'reasoning_effort', 'max_completion_tokens',
+          'finish_reason', 'completion_status', 'fixture_latency_ms',
+          'fixture_latency_basis', 'ticket_id', 'ticket_class'}
 ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'internal_error', 'provider_bad_request', 'provider_auth_failed',
           'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
           'provider_rate_limited', 'provider_unknown_429', 'provider_unavailable',
           'provider_transport_error', 'provider_timeout', 'invalid_provider_response',
-          'missing_provider_key', 'invalid_provider_mode', 'provider_rejected'}
+          'missing_provider_key', 'invalid_provider_mode', 'provider_rejected',
+          'invalid_reasoning_effort', 'invalid_reasoning_limit',
+          'unsupported_reasoning_model', 'replay_miss'}
 
 
 def now():
@@ -50,6 +58,8 @@ def context(headers):
 
 
 def tokens_from_usage(usage):
+    if usage is None:
+        return None
     data = usage.model_dump() if hasattr(usage, 'model_dump') else usage
     prompt, output = data['prompt_tokens'], data['completion_tokens']
     cached = (data.get('prompt_tokens_details') or {}).get('cached_tokens', 0)
@@ -61,6 +71,8 @@ def tokens_from_usage(usage):
 
 
 def estimate(model, tokens, prices=None):
+    if tokens is None:
+        return None
     rates = (PRICES if prices is None else prices).get(model)
     if rates is None:
         return None
@@ -84,10 +96,13 @@ class Span:
         for key, value in fields.items():
             if key not in FIELDS:
                 raise ValueError('non-allowlisted telemetry field')
-            if key in {'request_model', 'response_model', 'provider_request_id'}:
+            if key in {'request_model', 'response_model', 'provider_request_id', 'ticket_id', 'ticket_class'}:
                 value = safe_id(value)
             if key in {'tenant_id', 'conversation_id'} and (type(value) is not int or value <= 0):
                 continue
+            if key == 'response_model' and value == 'anchor-reasoning-replay':
+                self.record.update(price_version='fixture-illustrative-v1',
+                                   cost_basis='illustrative_fixture_estimate')
             self.record[key] = value
 
     def fail(self, code, status=None):

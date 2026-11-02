@@ -92,3 +92,50 @@ def test_category_mapping_and_cost():
     assert obs.estimate('example', tokens, prices) == pytest.approx(0.0036)
     assert obs.estimate('unknown', tokens) is None
     assert obs.context({'traceparent': '00-' + '0' * 32 + '-' + PARENT + '-01'})['parent_span_id'] is None
+
+
+def test_reasoning_logged_without_double_charge(captured, monkeypatch):
+    import asyncio
+    from anchor_ai.provider import ReplayProvider, REASONING_RESPONSES
+    from anchor_ai.reasoning import REPLAY_MODEL
+    monkeypatch.setenv('OPENAI_MODEL', REPLAY_MODEL)
+    ticket = json.loads(REASONING_RESPONSES.read_text())['tickets'][0]
+    provider = ReplayProvider(task='reasoning', fixture_id='B1', effort='high')
+    asyncio.run(LlmClient(provider).complete_result(ticket['ticket'], max_tokens=4000, effort='high'))
+    record = captured[-1]
+    assert record['tokens']['reasoning'] == 1200
+    assert record['tokens']['output'] == 1224
+    assert record['cost_estimate'] == pytest.approx(0.01244)
+    assert record['price_version'] == 'fixture-illustrative-v1'
+    assert record['cost_basis'] == 'illustrative_fixture_estimate'
+    assert record['fixture_latency_ms'] == 3300
+    assert record['latency_ms'] >= 0
+    assert ticket['ticket'] not in json.dumps(captured)
+
+
+def test_unknown_reasoning_is_not_zero():
+    tokens = obs.tokens_from_usage({'prompt_tokens': 10, 'completion_tokens': 20})
+    assert tokens['reasoning'] is None
+    assert obs.estimate('gpt-4o-mini', tokens) is not None
+    assert obs.tokens_from_usage(None) is None
+    assert obs.estimate('gpt-4o-mini', None) is None
+
+
+def test_missing_usage_stays_unknown_in_error_log(captured):
+    import asyncio
+    from anchor_ai.provider import ProviderError
+
+    class MissingUsageProvider:
+        def key(self):
+            return KEY
+
+        def client(self):
+            body = {'choices': [{'message': {'content': 'answer'}, 'finish_reason': 'stop'}]}
+            return httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=body)))
+
+    with pytest.raises(ProviderError, match='invalid_provider_response'):
+        asyncio.run(LlmClient(MissingUsageProvider()).complete_result(MESSAGE))
+    assert captured[-1]['tokens'] is None
+    assert captured[-1]['cost_estimate'] is None
+    assert captured[-1]['error_type'] == 'invalid_provider_response'

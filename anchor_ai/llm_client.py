@@ -11,12 +11,14 @@ try:
     from .provider import (ProviderError, ReplayProvider, LiveProvider,
                            configured_provider, classify, safe_retry_after)
     from .observability import span, tokens_from_usage, estimate, PRICE_VERSION
+    from .reasoning import request_fields
 except ImportError:
     from contracts import InferResponse, Usage, TriageLabels
     from prompts import render
     from provider import (ProviderError, ReplayProvider, LiveProvider,
                           configured_provider, classify, safe_retry_after)
     from observability import span, tokens_from_usage, estimate, PRICE_VERSION
+    from reasoning import request_fields
 
 MAX_ATTEMPTS = 3
 TOTAL_DEADLINE = 4.0
@@ -38,8 +40,8 @@ class LlmClient:
         self.jitter = jitter or (lambda: random.uniform(0, 0.05))
         self.attempts = 0
 
-    def complete(self, prompt, system=None, max_tokens=256):
-        return asyncio.run(self.complete_result(prompt, system, max_tokens)).reply
+    def complete(self, prompt, system=None, max_tokens=256, *, effort=None):
+        return asyncio.run(self.complete_result(prompt, system, max_tokens, effort=effort)).reply
 
     def complete_triage(self, ticket, *, variant='zero_shot', fixture_id=None):
         prompt = render(variant, ticket)
@@ -55,7 +57,7 @@ class LlmClient:
         finally:
             self.provider = original
 
-    async def complete_result(self, prompt, system=None, max_tokens=256):
+    async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None):
         self.attempts = 0
         self.last_error = ProviderError('provider_timeout', retryable=True)
         with span('llm.call', stage='provider',
@@ -65,8 +67,19 @@ class LlmClient:
                   else 'published_price_estimate') as telemetry:
             self.telemetry = telemetry
             try:
+                model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+                fields = request_fields(model, effort, max_tokens,
+                                        offline=isinstance(self.provider, ReplayProvider))
+                if effort is not None:
+                    telemetry.set(reasoning_setting=effort,
+                                  reasoning_effort=fields['reasoning_effort'],
+                                  max_completion_tokens=max_tokens)
+                fixture_ms = getattr(self.provider, 'fixture_latency_ms', None)
+                if fixture_ms is not None:
+                    telemetry.set(fixture_latency_ms=fixture_ms,
+                                  fixture_latency_basis='authored_example')
                 return await asyncio.wait_for(
-                    self._run(prompt, system, max_tokens), timeout=TOTAL_DEADLINE
+                    self._run(prompt, system, max_tokens, fields), timeout=TOTAL_DEADLINE
                 )
             except asyncio.TimeoutError:
                 raise self._final_error() from None
@@ -79,7 +92,7 @@ class LlmClient:
         error.retry_after = safe_retry_after(error.retry_after)
         return error
 
-    async def _run(self, prompt, system, max_tokens):
+    async def _run(self, prompt, system, max_tokens, reasoning_fields=None):
         key = self.provider.key()
         messages = []
         if system is not None:
@@ -87,6 +100,9 @@ class LlmClient:
         messages.append({'role': 'user', 'content': prompt})
         payload = {'model': os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
                    'messages': messages, 'max_tokens': max_tokens}
+        if reasoning_fields:
+            payload.pop('max_tokens')
+            payload.update(reasoning_fields)
         end = self.clock() + TOTAL_DEADLINE
         async with self.provider.client() as client:
             while self.attempts < MAX_ATTEMPTS:
@@ -118,7 +134,10 @@ class LlmClient:
                             tokens = tokens_from_usage(usage)
                             model = body.get('model')
                             self.telemetry.set(response_model=model, tokens=tokens,
-                                               cost_estimate=estimate(model, tokens))
+                                               cost_estimate=estimate(model, tokens),
+                                               finish_reason=result.finish_reason,
+                                               completion_status='incomplete' if result.finish_reason == 'length'
+                                               else 'completed' if result.finish_reason == 'stop' else 'other')
                             return result
                         except (ValueError, KeyError, IndexError, TypeError):
                             raise ProviderError('invalid_provider_response', attempts=self.attempts) from None

@@ -1,0 +1,27 @@
+{
+  "provenance": "Hand-authored offline examples; rates and latency are illustrative, not live measurements.",
+  "model": "anchor-reasoning-replay",
+  "tickets": [
+    {"id":"B1","class":"billing","ticket":"Two invoices were charged for the same renewal. Service still works. Please reverse the duplicate charge.","expected":{"category":"billing","urgency":"P2"},
+     "runs":{
+       "off":{"labels":{"category":"account","urgency":"P2"},"input":160,"output":24,"reasoning":0,"fixture_latency_ms":900},
+       "low":{"labels":{"category":"billing","urgency":"P2"},"input":160,"output":324,"reasoning":300,"fixture_latency_ms":1500},
+       "high":{"labels":{"category":"billing","urgency":"P2"},"input":160,"output":1224,"reasoning":1200,"fixture_latency_ms":3300}},
+     "limited":{"cap":300,"input":160,"output":300,"reasoning":300,"fixture_latency_ms":1800}},
+    {"id":"T1","class":"technical","ticket":"The service is down for every user in our company. No one can sign in.","expected":{"category":"technical","urgency":"P1"},
+     "runs":{
+       "off":{"labels":{"category":"technical","urgency":"P1"},"input":90,"output":24,"reasoning":0,"fixture_latency_ms":600},
+       "low":{"labels":{"category":"technical","urgency":"P1"},"input":90,"output":64,"reasoning":40,"fixture_latency_ms":680},
+       "high":{"labels":{"category":"technical","urgency":"P1"},"input":90,"output":184,"reasoning":160,"fixture_latency_ms":920}}},
+    {"id":"A1","class":"account","ticket":"An attacker changed my account email and is using my account now. This is not a general service outage.","expected":{"category":"account","urgency":"P1"},
+     "runs":{
+       "off":{"labels":{"category":"technical","urgency":"P2"},"input":160,"output":24,"reasoning":0,"fixture_latency_ms":900},
+       "low":{"labels":{"category":"account","urgency":"P2"},"input":160,"output":324,"reasoning":300,"fixture_latency_ms":1500},
+       "high":{"labels":{"category":"account","urgency":"P1"},"input":160,"output":1224,"reasoning":1200,"fixture_latency_ms":3300}}},
+    {"id":"O1","class":"order","ticket":"My order is marked shipped. Can you send the tracking link? There is no urgent deadline.","expected":{"category":"order","urgency":"P3"},
+     "runs":{
+       "off":{"labels":{"category":"order","urgency":"P3"},"input":90,"output":24,"reasoning":0,"fixture_latency_ms":600},
+       "low":{"labels":{"category":"order","urgency":"P3"},"input":90,"output":64,"reasoning":40,"fixture_latency_ms":680},
+       "high":{"labels":{"category":"order","urgency":"P3"},"input":90,"output":184,"reasoning":160,"fixture_latency_ms":920}}}
+  ]
+}

@@ -1,0 +1,22 @@
+version: 1
+status: suggested_offline_only
+automatic_routing: false
+source: labs/reasoning-budgets/compare_budgets.py --offline
+fixture: anchor_ai/tests/fixtures/reasoning_responses.json
+model: anchor-reasoning-replay
+price_version: fixture-illustrative-v1
+max_completion_tokens: 4000
+evidence: "One authored ticket per existing class. Validate on representative live data before routing."
+classes:
+  billing:
+    effort: "low"
+    rationale: "This fixture improves at low and does not improve further at high."
+  technical:
+    effort: "off"
+    rationale: "All settings return correct labels; extra reasoning only adds fixture cost and latency."
+  account:
+    effort: "high"
+    rationale: "Only high returns both the correct category and urgency on this fixture."
+  order:
+    effort: "off"
+    rationale: "All settings return correct labels; no fixture quality gain justifies extra reasoning."

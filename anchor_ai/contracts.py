@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+ReasoningEffort = Literal['off', 'low', 'high']
+
 
 class InferRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
