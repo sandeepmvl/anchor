@@ -222,3 +222,23 @@ class ReleaseRagResponse(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     scope: ReleaseRagScope
     capture: dict[str, JsonValue]
+
+
+class OrderToolArguments(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    order_id: str = Field(pattern=r'^A[0-9]{1,12}$')
+
+
+class OrderToolResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    order_id: str = Field(pattern=r'^A[0-9]{1,12}$')
+    payment_id: str = Field(pattern=r'^pay_A[0-9]{1,12}$')
+    status: Literal['delivered', 'processing']
+    customer_contact: str
+
+
+class RefundToolResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    order_id: str = Field(pattern=r'^A[0-9]{1,12}$')
+    eligible: bool
+    reason: Literal['within_window', 'outside_window']

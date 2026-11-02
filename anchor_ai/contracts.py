@@ -100,7 +100,8 @@ class Usage(BaseModel):
     def valid_subsets(self):
         if self.prompt_tokens_details and self.prompt_tokens_details.cached_tokens > self.prompt_tokens:
             raise ValueError('invalid cached usage')
-        reasoning = self.completion_tokens_details.reasoning_tokens if self.completion_tokens_details else None
+        reasoning = (self.completion_tokens_details.reasoning_tokens
+                     if self.completion_tokens_details else None)
         if reasoning is not None and reasoning > self.completion_tokens:
             raise ValueError('invalid reasoning usage')
         return self
@@ -130,3 +131,17 @@ class TriageLabels(BaseModel):
 
 
 # schemas.py inherits TriageLabels for strict requests and local output validation.
+
+
+class ToolScope(BaseModel):
+    """Construct only from authenticated application context, not model input."""
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+
+
+class ToolCall(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    call_id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=200)
+    arguments: str | dict

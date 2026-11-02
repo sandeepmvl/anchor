@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      ["lookup_1", "lookup_order", "{\"order_id\":\"A100\"}"],
+      ["check_1", "check_refund", "{\"order_id\":\"A100\"}"]
+    ]
+  },
+  {
+    "calls": [["chain_1", "check_refund", "$lookup_order_id"]]
+  },
+  {
+    "calls": [
+      ["unknown_1", "invented_refund", "{}"],
+      ["bad_json_1", "lookup_order", "{"],
+      ["bad_type_1", "lookup_order", "{\"order_id\":7}"],
+      ["override_1", "lookup_order", "{\"order_id\":\"A100\",\"tenant_id\":2}"],
+      ["exception_1", "lookup_order", "{\"order_id\":\"A999\"}"]
+    ]
+  },
+  {
+    "calls": [["retry_1", "lookup_order", "{\"order_id\":\"A100\"}"]]
+  },
+  {
+    "text": "Order A100 is delivered. Refund eligibility: eligible, within_window. No refund was issued."
+  }
+]

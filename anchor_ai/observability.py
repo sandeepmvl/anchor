@@ -179,3 +179,19 @@ AGENT_SUMMARIES = {
 
 FIELDS.update({'query_fingerprint', 'duplicate_query', 'new_chunk_ids',
                'seen_chunk_ids', 'hops_remaining'})
+
+
+FIELDS.add('tool_call_fingerprint')
+TOOL_ERRORS = {'unknown_tool', 'invalid_json', 'invalid_arguments', 'execution_error'}
+ERRORS.update(TOOL_ERRORS)
+
+
+@contextmanager
+def tool_span(scope, call):
+    import hashlib
+    name = call.name if call.name in {'lookup_order', 'check_refund'} else 'unknown'
+    fingerprint = hashlib.sha256(call.call_id.encode()).hexdigest()
+    with span('python.tool', stage='tool', tenant_id=scope.tenant_id,
+              conversation_id=scope.conversation_id, tool_name=name,
+              tool_call_fingerprint=fingerprint) as item:
+        yield item

@@ -168,7 +168,7 @@ def test_golden_gate_and_nonzero_exit_on_regression(tmp_path):
     dataset['chunks'][0]['text'] = 'zzzzunrelated'
     path = tmp_path / 'regression.json'
     path.write_text(json.dumps(dataset))
-    process = subprocess.run([sys.executable, str(ROOT / 'eval/retrieval_gate.py'), str(path)],
-                             capture_output=True, text=True, timeout=8)
+    process = subprocess.run([sys.executable, '-m', 'eval.retrieval_gate', str(path)],
+                             cwd=ROOT, capture_output=True, text=True, timeout=8)
     assert process.returncode != 0
     assert 'retrieval_regression' in process.stderr
