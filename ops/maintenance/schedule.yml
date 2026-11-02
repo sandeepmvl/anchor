@@ -1,0 +1,26 @@
+version: 1
+tasks:
+  backup_verification:
+    cadence: daily
+    owner: platform_on_call
+    evidence: isolated restore checksums, snapshot age, RPO and usable-service RTO
+  index_maintenance:
+    cadence: weekly
+    owner: retrieval_owner
+    evidence: source/index versions, tenant isolation and retrieval evaluation before activation
+  credential_rotation:
+    cadence: monthly_review_and_on_exposure
+    owner: security_owner
+    evidence: approved expiry schedule, replacement access tested, old key revoked; no secret values
+  quota_and_cost:
+    cadence: weekly_and_before_traffic_events
+    owner: service_owner
+    evidence: tenant usage, provider limits and budget headroom
+  model_deprecation:
+    cadence: weekly_and_on_provider_notices
+    owner: ai_platform_owner
+    evidence: deployed model IDs, official shutdown dates, migration owner and replacement release-gate results
+  runbook_and_rotation:
+    cadence: every_handoff_and_monthly_review
+    owner: on_call_lead
+    evidence: named contacts, access checks, accepted issues and drill results

@@ -14,6 +14,17 @@ No model calls, external refunds, Rails requests, or production backups occur.
 5. Record snapshot age, elapsed_seconds, rto_met, and the limitations in the report.
 6. Remove the local key and tmp/anchor-recovery after recording exercise evidence.
 
+## Queue recovery is not snapshot recovery
+
+For QueueAgeHigh, follow ops/runbooks/operations_runbook.md before restoring data.
+The worker drill records original backlog latency, fresh-window latency, ticket
+counts and unique fixture action keys. Its atomic SQLite ledger does not prove
+external tool exactly-once execution or Solid Queue claim recovery. Preserve
+original tool keys and reconcile provider action IDs before retrying uncertain
+work. Do not restore a snapshot merely because a worker stopped progressing.
+Daily backup verification ownership is in ops/maintenance/schedule.yml; the
+existing snapshot schedule alone does not provide restore evidence.
+
 ## Production: blocked until a coordinated adapter exists
 
 Disable ingestion, memory writers, and tool workers using the incident playbook.

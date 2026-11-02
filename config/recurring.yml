@@ -3,9 +3,15 @@ development:
     command: "AiTaskDispatcher.sweep"
     schedule: every minute
 production:
+  validate_operations_schedule:
+    command: "Kernel.system('ruby', 'labs/production-operations/worker_recovery.rb', 'maintenance', exception: true)"
+    schedule: every day at 08:00
   recover_ai_tasks:
     command: "AiTaskDispatcher.sweep"
     schedule: every minute
+  # Snapshot creation is not restore verification. Daily verification ownership,
+  # index review and credential/model review live in ops/maintenance/schedule.yml.
+  # Those owner tasks are not automatically executed by this scheduler.
   snapshot_anchor_state:
     command: "Kernel.system('sh', 'ops/backups/backup_snapshot.sh', exception: true)"
     schedule: every hour

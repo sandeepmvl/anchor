@@ -2,6 +2,9 @@ default: &default
   dispatchers:
     - polling_interval: 1
       batch_size: 100
+  # Operations: TERM the dedicated worker supervisor; never bulk-requeue claims.
+  # Keep ingestion and async ticket queues covered by this wildcard.
+  # Resolve deployed shutdown timeout before restart; see operations_runbook.md.
   workers:
     - queues: "*"
       threads: 2
