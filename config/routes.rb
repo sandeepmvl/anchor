@@ -1,5 +1,6 @@
 Rails.application.config.filter_parameters += [:summary, :authorization]
 Rails.application.config.filter_parameters += [:credential]
+Rails.application.config.filter_parameters += [:x_anchor_quota_context]
 
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
@@ -24,4 +25,7 @@ Rails.application.routes.draw do
   get '/api/organizations/:organization_id/ai_tasks/:id', to: 'api/ai_tasks#show'
   post '/api/ai_costs', to: 'api/ai_costs#create'
   get '/admin/organizations/:organization_id/ai_costs', to: 'admin/ai_costs#index'
+  post '/api/ai_budget_reservations', to: 'api/ai_budget_reservations#create'
+  patch '/api/ai_budget_reservations/:id', to: 'api/ai_budget_reservations#update'
+  get '/api/ai_budget_reservations', to: 'api/ai_budget_reservations#index'
 end

@@ -199,3 +199,15 @@ async def account_batch(adapter, key, records, collector):
     except Exception:
         collector.unresolved.append(attempt['attempt_id'])
         raise
+
+
+def settle_quota_usage(client, reservation, attempt, raw, config, *, style='chat'):
+    """Settle authority first; historical events are not an extra budget debit."""
+    from anchor_ai.quota_client import QuotaDenied
+    event = dict(attempt, usage=normalize(raw, style,
+        embedding=attempt['role'] in {'first_query_embedding', 'extra_query_embedding'}))
+    amount = sum(price(event, config).values())
+    if amount > reservation['bound']:
+        raise QuotaDenied('quota_bound_exceeded', 409)
+    client.settle(reservation['reservation_id'], amount)
+    return dict(event, reservation_id=reservation['reservation_id'])

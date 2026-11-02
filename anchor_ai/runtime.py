@@ -304,7 +304,6 @@ class BoundedRuntime:
                        idempotency_key=s['key'] if action == 'issue_refund' else None)
             s['memory'].append(dict(action=action, observation=observation))
             self.event(s, 'memory_write', outcome='success')
-            self.event(s, 'escalation_trigger', reason=None)
             s['phase'] += 1
             s['pending'] = None
             self.save(s)
@@ -423,4 +422,18 @@ def verified_cost_scope(collector, *, verify, token, feature, role, model,
         raise ContextError('unverified_execution_context')
     with collector.scope(tenant_id=identity.tenant_id, feature=feature, role=role,
                          model=model, logical_call_id=logical_call_id, window=window):
+        yield identity
+
+
+@contextmanager
+def verified_quota_scope(*, verify, token, client_for, feature, bound):
+    """client_for binds a verified identity to the Rails authority context."""
+    from anchor_ai.quota_client import quota_scope
+    if not token:
+        raise ContextError('missing_execution_context')
+    identity = verify(token)
+    if (identity is None or type(identity.tenant_id) is not int
+            or identity.tenant_id <= 0 or not identity.role):
+        raise ContextError('unverified_execution_context')
+    with quota_scope(client_for(identity, feature), bound=bound):
         yield identity

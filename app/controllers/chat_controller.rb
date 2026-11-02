@@ -1,5 +1,6 @@
 class ChatController < ApplicationController
   include ActionController::Live
+  include AiQuotaEnforcement
   protect_from_forgery with: :exception
   # Only the original non-streaming JSON endpoint is exempt from CSRF.
   skip_forgery_protection if: -> { action_name == 'create' && !stream_request? }

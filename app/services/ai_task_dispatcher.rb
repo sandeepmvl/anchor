@@ -7,6 +7,8 @@ class AiTaskDispatcher
         evidence["ANCHOR_AGENT_IDEMPOTENCY_VERIFIED"] == "1"
       raise ReleaseBlocked, "downstream_idempotency_evidence_missing"
     end
+    AiQuotaPolicy.release_check!(production: production,
+      config: JSON.parse(Rails.root.join('config/ai_budgets.yml').read), evidence: evidence)
   end
 
   def self.submit_ingestion!(organization_id:, submission_key:, references:)

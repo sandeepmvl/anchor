@@ -11,5 +11,14 @@
   "budgets": {
     "chat": {"limit": 40000, "warning_percent": 80},
     "rag": {"limit": 30000, "warning_percent": 80}
+  },
+  "quotas": {
+    "daily_limit": 70000,
+    "tenant": {"limit": 100, "window_seconds": 60},
+    "user": {"limit": 20, "window_seconds": 60},
+    "features": {
+      "chat": {"limit": 80, "window_seconds": 60},
+      "rag": {"limit": 60, "window_seconds": 60}
+    }
   }
 }

@@ -13,7 +13,9 @@ class AiTelemetry
     invalid_provider_mode provider_rejected internal_error
     trusted_context_required retrieval_upstream_failed invalid_retrieval_response
     invalid_retrieval_url retrieval_secret_required invalid_request_id
-    invalid_traceparent retrieval_stream_not_supported].freeze
+    invalid_traceparent retrieval_stream_not_supported
+    rate_limit budget_exhausted quota_authority_unavailable quota_identity_required
+    quota_release_evidence_missing quota_bound_exceeded].freeze
 
   class << self
     attr_writer :sink
@@ -39,7 +41,7 @@ class AiTelemetry
       valid = match && match[1].to_i(16).positive? && match[2].to_i(16).positive?
       safe = request_id.is_a?(String) && /\A[A-Za-z0-9_-]{1,80}\z/.match?(request_id)
       { request_id: safe ? request_id : SecureRandom.uuid,
-        trace_id: valid ? match[1] : SecureRandom.hex(16),
+        trace_id: valid ? match[1] : SecureRandom.hex(32 / 2),
         parent_span_id: valid ? match[2] : nil }
     end
 

@@ -379,3 +379,9 @@ class AccountedBatchAdapter:
             if embedding != (key[2] == 'embedding'):
                 raise ValueError('batch_cost_role_mismatch')
             return await account_batch(self.adapter, key, records, self.collector)
+
+
+def admitted_batch_adapter(adapter, *, scope):
+    """One shared authority for call and submit_job; no local allowance."""
+    from anchor_ai.quota_client import AdmittedBatchAdapter
+    return AdmittedBatchAdapter(adapter, scope=scope)

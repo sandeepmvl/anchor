@@ -501,3 +501,9 @@ def accounted_provider(provider, collector, *, style='chat'):
     """Explicit buffered-JSON accounting seam; streaming is not supported here."""
     from anchor_ai.cost_accounting import AccountingProvider
     return AccountingProvider(provider, collector, style=style)
+
+
+def admitted_provider(provider):
+    """Compose at the HTTP boundary; a verified quota scope is mandatory."""
+    from anchor_ai.quota_client import AdmittedProvider
+    return AdmittedProvider(provider)
