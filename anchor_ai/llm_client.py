@@ -33,6 +33,11 @@ except ImportError:
     from provider import ContextReplayProvider, stream_tokens as provider_stream
     from prompts import SUMMARY_VERSION
 
+try:
+    from .embeddings import embed as embed_texts
+except ImportError:
+    from embeddings import embed as embed_texts
+
 MAX_ATTEMPTS = 3
 TOTAL_DEADLINE = 4.0
 BACKOFF_CAP = 1.0
@@ -87,6 +92,11 @@ class LlmClient:
         self.jitter = jitter or (lambda: random.uniform(0, 0.05))
         self.attempts = 0
 
+    def embed(self, texts, input_type='document', *, provider=None, config=None,
+              transport=None, api_key=None):
+        return embed_texts(texts, input_type, provider=provider, config=config,
+                          transport=transport, api_key=api_key)
+
     async def stream_tokens(self, prompt, *, contract=None):
         contract = selected_contract(prompt, contract)
         if context_options(prompt) is not None:
@@ -117,6 +127,7 @@ class LlmClient:
             await source.aclose()
 
     async def _stream_contract(self, prompt, contract):
+        contract = selected_contract(prompt, contract)
         if isinstance(self.provider, (ReplayProvider, PromptReplayProvider)):
             result = await self.complete_result(prompt, contract=contract)
             for start in range(0, len(result.reply), 16):
@@ -358,7 +369,6 @@ class LlmClient:
                 return result.reply
         with span('context.assemble', stage='context', **contract_fields(contract)) as telemetry:
             assembly = await assemble(contract, str(prompt), history, state, summarize)
-            telemetry.set(**assembly.metrics)
         prepared = PreparedPrompt(str(prompt), assembly, contract)
         # Attach numeric metrics to this request, never to a shared provider.
         prepared.context_metrics = assembly.metrics

@@ -1,0 +1,11 @@
+{
+  "model": "anchor-recorded-embedding-v1",
+  "revision": "authored-fixture-v1",
+  "dimensions": 4,
+  "provenance": "Hand-authored synthetic responses, not captured from a provider; shared by query and document modes.",
+  "records": [
+    {"text": "Can I get my money back?", "vector": [1.0, 0.0, 0.0, 0.0]},
+    {"text": "How do I request a refund?", "vector": [0.99, 0.05, 0.0, 0.0]},
+    {"text": "How do I reset my password?", "vector": [0.0, 1.0, 0.0, 0.0]}
+  ]
+}

@@ -1,0 +1,15 @@
+embeddings:
+  default_provider: offline
+  providers:
+    offline:
+      model: anchor-recorded-embedding-v1
+      revision: authored-fixture-v1
+      dimensions: 4
+    openai:
+      model: text-embedding-3-small
+      revision: anchor-openai-small-1536-v1
+      dimensions: 1536
+    voyage:
+      model: voyage-3.5
+      revision: anchor-voyage-1024-v1
+      dimensions: 1024

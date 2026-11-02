@@ -17,6 +17,7 @@ import uvicorn
 
 from anchor_ai.app import app
 from anchor_ai import observability, streaming
+from anchor_ai.llm_client import LlmClient
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,8 +57,18 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
         finally:
             closed.set()
 
+    async def client_source(self, prompt, *, contract=None):
+        upstream = source(prompt)
+        try:
+            async for delta in upstream:
+                if delta.text:
+                    yield delta.text
+        finally:
+            await upstream.aclose()
+
     monkeypatch.setenv('ANCHOR_AI_SECRET', 'stack-only-secret')
     monkeypatch.setattr(streaming, 'TOKEN_SOURCE', source)
+    monkeypatch.setattr(LlmClient, 'stream_tokens', client_source)
     monkeypatch.setattr(observability, 'SINK', records.append)
     server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=python_port,
                                          log_level='error', lifespan='off'))
@@ -92,7 +103,7 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
             match = re.search(r'name="csrf-token" content="([^"]+)"', page.text)
             token = html.unescape(match[1]) if match else ''
             headers = {'Accept': 'text/event-stream', 'X-CSRF-Token': token}
-            with session.post(base + '/chat', json={'message': 'When will my refund arrive?'},
+            with session.post(base + '/chat', json={'message': 'When will my refund arrive?', 'stream': True},
                               headers=headers, stream=True, timeout=2) as response:
                 response.raise_for_status()
                 packets, buffer = [], b''
@@ -108,7 +119,7 @@ def test_browser_disconnect_cancels_upstream_provider(monkeypatch):
                 assert b'Refunds take five days.' in packets[-1]
             closed.clear()
             slow.set()
-            body = json.dumps({'message': 'When will my refund arrive?'}).encode()
+            body = json.dumps({'message': 'When will my refund arrive?', 'stream': True}).encode()
             cookie = '; '.join(f'{key}={value}' for key, value in session.cookies.items())
             browser = socket.create_connection(('127.0.0.1', rails_port), timeout=2)
             request = (
