@@ -6,3 +6,25 @@
 }.each do |version, attributes|
   PromptRegistry.publish(version, attributes)
 end
+
+unless Rails.env.production?
+  baseline = Rails.root.join('eval/datasets/golden_v1.jsonl')
+  File.foreach(baseline) do |line|
+    row = JSON.parse(line)
+    attributes = {tenant_id: row.fetch('tenant_id'), kind: 'example', key: row.fetch('source_run_id')}
+    payload = row.except('tenant_id')
+    existing = GoldenDataset.find_by(attributes)
+    if existing
+      # A later reviewed revision is allowed; the historical v1 stays frozen.
+      raise 'golden_seed_identity_conflict' unless existing.payload['provenance'] == payload['provenance']
+    else
+      GoldenDataset.create!(**attributes, payload: payload)
+    end
+  end
+  unless GoldenDataset.versions.exists?(tenant_id: 'tenant-demo', key: 'v1')
+    docs = GoldenDatasets::Versioner.replay_evidence(baseline, tenant: 'tenant-demo')
+    GoldenDatasets::Versioner.new(tenant: 'tenant-demo').publish!(name: 'v1', against: nil,
+      docs: docs, built_against_tag: 'golden-baseline-v1')
+  end
+  puts 'Golden baseline registered as immutable v1 (replay tenant only).'
+end

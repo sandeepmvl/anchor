@@ -21,6 +21,13 @@ class AiTelemetry
       @sink ||= ->(record) { $stdout.puts(JSON.generate(record)) }
     end
 
+    def golden_event(status:, count:)
+      unless %w[ok rejected].include?(status) && count.is_a?(Integer) && count >= 0
+        raise ArgumentError, 'invalid_golden_diagnostic'
+      end
+      sink.call(event: 'golden_import', status: status, count: count)
+    end
+
     def context(request_id: nil, traceparent: nil)
       match = /\A00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})\z/.match(traceparent.to_s)
       valid = match && match[1].to_i(16).positive? && match[2].to_i(16).positive?

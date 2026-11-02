@@ -44,6 +44,9 @@ module Finetuning
       seen_ids = {}
       File.foreach(@source) do |line|
         row = JSON.parse(line)
+        if row.key?('expected_output') || row.key?('review_status') || row['evaluation_only'] == true
+          raise ArgumentError, 'golden_evaluation_data_forbidden_in_training'
+        end
         if row['tenant_id'] != @tenant
           counts['wrong_tenant'] += 1
           next

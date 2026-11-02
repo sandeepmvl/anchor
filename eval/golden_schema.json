@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Anchor golden example payload v1",
+  "type": "object",
+  "required": ["query", "context", "expected_output", "tags", "difficulty", "source", "source_run_id", "provenance", "case_type", "source_doc_ids", "doc_version", "status", "review_status", "redacted", "needs_review"],
+  "properties": {
+    "tenant_id": {"type": "string", "minLength": 1},
+    "query": {"type": "string", "minLength": 1},
+    "context": {"type": "array", "minItems": 1, "items": {
+      "type": "object", "required": ["id", "tenant_id", "version", "text"],
+      "properties": {"id": {"type": "string"}, "tenant_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1}, "text": {"type": "string", "minLength": 1}}
+    }},
+    "expected_output": {"type": "string", "minLength": 1},
+    "tags": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "difficulty": {"enum": ["easy", "medium", "hard"]},
+    "source": {"type": "string", "minLength": 1},
+    "source_run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,80}$"},
+    "provenance": {"type": "object", "required": ["kind", "reference"], "properties": {
+      "kind": {"enum": ["replay", "reviewed_seed", "production"]}, "reference": {"type": "string", "minLength": 1}
+    }},
+    "case_type": {"const": "rag"},
+    "expected_tool_calls": {"type": "null"},
+    "source_doc_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "doc_version": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+    "status": {"enum": ["pending", "active", "deprecated"]},
+    "review_status": {"enum": ["pending", "approved", "deprecated"]},
+    "needs_review": {"type": "boolean"},
+    "redacted": {"const": true},
+    "labeler": {"type": "string"},
+    "labeled_at": {"type": "string"},
+    "intake_sha256": {"type": "string"}
+  }
+}
