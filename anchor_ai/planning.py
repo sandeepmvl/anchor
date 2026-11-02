@@ -11,6 +11,7 @@ from uuid import uuid4
 import yaml
 
 from anchor_ai.schemas import AccountExecutionScope, AccountObservation, AccountPlan
+from anchor_ai.context import agent_memory_prompt
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).parent / 'tests/fixtures/account_change_plan.json'
@@ -143,7 +144,8 @@ def validate_plan(raw, state, config):
 
 class PlanExecuteRuntime:
     def __init__(self, retriever=None, *, planner=None, backend=None,
-                 tenant_id=None, max_replans=None):
+                 tenant_id=None, max_replans=None, memory=None):
+        self.memory = memory
         self.config = policy()
         if planner is None:
             mode = os.getenv('ANCHOR_PLANNER_MODE', 'offline')
@@ -181,6 +183,7 @@ class PlanExecuteRuntime:
 
     async def request_plan(self, ticket, state, reason=None):
         self.reserve(state)
+        ticket = agent_memory_prompt(ticket, self.memory, state.scope)
         raw = await asyncio.wait_for(
             self.planner.plan(ticket, state.snapshot(), reason), PLANNER_TIMEOUT_SECONDS)
         return validate_plan(raw, state, self.config)
@@ -210,6 +213,8 @@ class PlanExecuteRuntime:
         state = execution_run or PlanningRun(scope)
         if state.scope != scope or state.halted:
             raise ValueError('invalid_execution_run')
+        if self.memory is not None:
+            self.memory.add_working(scope.tenant_id, scope.conversation_id, question)
         self.last_run = state
         self.last_trajectory = []
         approvals = frozenset(approved_changes)
@@ -220,6 +225,9 @@ class PlanExecuteRuntime:
 
         def finish(reason):
             state.halted = True
+            if self.memory is not None:
+                self.memory.log_episode(scope.tenant_id, scope.conversation_id,
+                                        'planning exit=' + reason + ' tool_calls=' + str(state.calls))
             record('exit', reason=reason, ledger=state.snapshot())
             confirmed = any(r['tool'] == 'confirm_change' for r in state.completed.values())
             return {'reply': 'Address changed.' if confirmed else 'Address change blocked or unconfirmed.',

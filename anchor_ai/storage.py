@@ -116,3 +116,33 @@ def initialize_sandbox(path):
         ''')
     finally:
         db.close()
+
+
+def connect_memory(path):
+    """Memory-only connection: no dependency on document or Rails tables."""
+    db = sqlite3.connect(path, timeout=2)
+    db.row_factory = sqlite3.Row
+    try:
+        db.executescript('''
+        CREATE TABLE IF NOT EXISTS agent_memories (
+          tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
+          conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
+          key TEXT NOT NULL, value TEXT NOT NULL,
+          updated_at REAL NOT NULL, expires_at REAL NOT NULL,
+          UNIQUE(tenant_id,conversation_id,key));
+        CREATE TABLE IF NOT EXISTS episodic_memory_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tenant_id INTEGER NOT NULL CHECK(tenant_id>0),
+          conversation_id INTEGER NOT NULL CHECK(conversation_id>0),
+          summary TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS memory_fact_expiry
+          ON agent_memories(tenant_id,conversation_id,expires_at);
+        CREATE INDEX IF NOT EXISTS memory_episode_recency
+          ON episodic_memory_log(tenant_id,conversation_id,created_at DESC,id DESC);
+        CREATE INDEX IF NOT EXISTS memory_episode_expiry
+          ON episodic_memory_log(tenant_id,conversation_id,expires_at);
+        ''')
+        return db
+    except Exception:
+        db.close()
+        raise

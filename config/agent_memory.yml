@@ -1,0 +1,13 @@
+working:
+  max_entries: 3
+  max_scopes: 64
+  entry_tokens: 120
+facts:
+  ttl_seconds: 604800
+  keys: [contact_preference, refund_discussion]
+episodes:
+  ttl_seconds: 86400
+  max_entries: 20
+  summary_tokens: 120
+recall:
+  token_budget: 180

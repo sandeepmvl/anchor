@@ -3,6 +3,7 @@ import hashlib
 import json
 
 from anchor_ai.agentic_rag import ABSTENTION, AgenticRuntime
+from anchor_ai.context import agent_memory_prompt
 from anchor_ai.autonomy import run_for
 from anchor_ai.contracts import ToolScope
 from anchor_ai.observability import AGENT_SUMMARIES, emit_react, span
@@ -39,8 +40,10 @@ class NativePolicyAdapter:
 
 class ReActRuntime(AgenticRuntime):
     """Read-only ReAct strategy; consequential tools are not enabled here."""
-    def __init__(self, retriever, *, native_client=None, detect_cycles=True, **kwargs):
+    def __init__(self, retriever, *, native_client=None, detect_cycles=True,
+                 memory=None, **kwargs):
         super().__init__(retriever, **kwargs)
+        self.memory = memory
         self.native_client = native_client or NativePolicyAdapter(self.policy)
         self.detect_cycles = detect_cycles
         self.last_exit = None
@@ -56,11 +59,15 @@ class ReActRuntime(AgenticRuntime):
             raise ValueError('invalid_conversation_seen_ids')
         if history and self.tool.generation_id is None:
             raise ValueError('agent_scope_mismatch')
+        if self.memory is not None and execution_scope is None:
+            raise ValueError('memory_requires_execution_scope')
         scope = execution_scope or ToolScope(tenant_id=self.tool.tenant_id, conversation_id=1)
         if scope.tenant_id != self.tool.tenant_id:
             raise ValueError('agent_scope_mismatch')
         state = run_for(scope, execution_run)
-        messages = [{'role': 'user', 'content': question}]
+        if self.memory is not None:
+            self.memory.add_working(scope.tenant_id, scope.conversation_id, question)
+        messages = [{'role': 'user', 'content': agent_memory_prompt(question, self.memory, scope)}]
         evidence, signatures, call_ids = {}, set(), set()
         calls = 0
         self.last_trajectory = []
@@ -77,6 +84,9 @@ class ReActRuntime(AgenticRuntime):
             def finish(reason, answer=None):
                 state.halted = True
                 self.last_exit = reason
+                if self.memory is not None:
+                    self.memory.log_episode(scope.tenant_id, scope.conversation_id,
+                                            'react exit=' + reason + ' tool_calls=' + str(calls))
                 result = answer or {'reply': ABSTENTION, 'citations': [], 'abstained': True}
                 root.set(agent_exit=reason, tool_calls=calls,
                          evidence_chunk_ids=sorted(evidence),

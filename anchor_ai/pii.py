@@ -96,3 +96,13 @@ def redact_finetuning_batch(rows):
     except Exception:
         # Never include source text or detector exception details in a log.
         raise ValueError('finetuning_redaction_failed') from None
+
+
+def redact_memory(text):
+    """Redact before memory persistence, buffering or episode export."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('invalid_memory_text')
+    safe = ' '.join(redact_finetuning_text(text).split())
+    if not safe or finetuning_detected(safe):
+        raise ValueError('memory_redaction_failed')
+    return safe
