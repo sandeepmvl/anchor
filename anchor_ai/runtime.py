@@ -223,6 +223,9 @@ class BoundedRuntime:
                     return self.stop(s, 'awaiting_approval', 'approval_required')
                 if s['approval']['digest'] != s['digest']:
                     return self.stop(s, 'denied', 'approval_scope_mismatch')
+            from anchor_ai.harness import before_dispatch
+            if not await before_dispatch(self, scope, s, action):
+                return self.stop(s, 'denied', 'harness_policy_denied')
             if not s['pending']['reserved']:
                 cost = self.policy['tools'][action]['cost_units']
                 permitted = (s['calls'] < s['caps']['max_calls']

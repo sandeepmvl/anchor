@@ -109,7 +109,7 @@ class Span:
                 raise ValueError('non-allowlisted telemetry field')
             if key in {'request_model', 'response_model'}:
                 value = safe_model_id(value)
-            if key in {'provider_request_id', 'ticket_id', 'ticket_class'}:
+            if key in {'provider_request_id', 'ticket_id', 'ticket_class', 'task_id', 'call_id'}:
                 value = safe_id(value)
             if key == 'prompt_version' and not (isinstance(value, str) and re.fullmatch(r'chat:v[1-9][0-9]*', value)):
                 raise ValueError('invalid prompt version')
@@ -233,3 +233,8 @@ def mcp_span(scope, server_id, call_id):
               conversation_id=scope.conversation_id, mcp_server_id=identity,
               tool_call_fingerprint=hashlib.sha256(call_id.encode()).hexdigest()) as item:
         yield item
+
+
+FIELDS.update({'execution_mode', 'task_id', 'call_id', 'interop_protocol',
+               'permission_decision', 'permission_reason'})
+ERRORS.add('delegation_rejected')

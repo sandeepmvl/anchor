@@ -85,3 +85,15 @@ async def run_support_conversation(ticket, memory, *, enabled=False, **options):
         raise ValueError('group_chat_requires_opt_in')
     from .group_chat import run_conversation
     return await run_conversation(ticket, memory, **options)
+
+
+async def run_harness_support_turn(adapter, token, request, *, enabled=False,
+                                   path='config/agent_execution.yml'):
+    if not enabled:
+        raise ValueError('local_harness_requires_opt_in')
+    config = yaml.safe_load(Path(path).read_text())
+    mode = config['modes']['local_harness']
+    if (mode['loop_owner'] != 'anchor_client'
+            or mode['pre_tool_hook'] != 'required'):
+        raise ValueError('invalid_local_harness_configuration')
+    return await adapter.run(token, request)

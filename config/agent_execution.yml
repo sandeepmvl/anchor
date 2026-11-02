@@ -1,0 +1,11 @@
+default: application
+modes:
+  application:
+    loop_owner: anchor
+  local_harness:
+    loop_owner: anchor_client
+    pre_tool_hook: required
+    delegation: authenticated_loopback_only
+  provider_native:
+    loop_owner: provider
+    opt_in: required

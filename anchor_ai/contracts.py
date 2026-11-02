@@ -172,3 +172,33 @@ class OrchestrationFlow(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
     pattern: Literal['single-agent', 'supervisor-worker']
     workers: dict[str, str] = Field(default_factory=dict)
+
+
+class DelegatedTask(BaseModel):
+    """Internal A2A-inspired envelope, not a public A2A wire implementation."""
+    model_config = ConfigDict(strict=True, extra='forbid')
+    protocol: Literal['anchor-a2a-loopback-v1']
+    task_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    tenant_id: int = Field(gt=0)
+    conversation_id: int = Field(gt=0)
+    skill: Literal['refund-resolution']
+    request: AgentRequest
+
+    @model_validator(mode='after')
+    def bind_run(self):
+        if self.request.run_id != self.task_id:
+            raise ValueError('task_run_mismatch')
+        if self.request.operation in ('approve', 'reject'):
+            raise ValueError('delegation_cannot_review')
+        return self
+
+
+class DelegatedResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid')
+    protocol: Literal['anchor-a2a-loopback-v1'] = 'anchor-a2a-loopback-v1'
+    task_id: str
+    tenant_id: int
+    conversation_id: int
+    trace_id: str
+    status: str
+    handoff: dict | None
