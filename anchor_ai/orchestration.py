@@ -97,3 +97,100 @@ async def run_harness_support_turn(adapter, token, request, *, enabled=False,
             or mode['pre_tool_hook'] != 'required'):
         raise ValueError('invalid_local_harness_configuration')
     return await adapter.run(token, request)
+
+
+FRAMEWORK_LABELS = {
+    'state': 'state-model expressiveness',
+    'debug': 'debuggability/observability',
+    'ecosystem': 'ecosystem maturity',
+    'exit-cost': 'exit-cost',
+    'runtime-fit': 'runtime-fit',
+}
+
+
+def framework_policy(path='config/orchestration.yml'):
+    import math
+    config = yaml.safe_load(Path(path).read_text())
+    policy_path = Path(config['framework_selection']['policy'])
+    if not policy_path.is_absolute():
+        policy_path = Path(path).resolve().parent.parent / policy_path
+    data = yaml.safe_load(policy_path.read_text())
+    if data['version'] != 1:
+        raise ValueError('unsupported_framework_policy')
+    candidates = {'LangChain', 'LangGraph', 'LlamaIndex', 'AutoGen', 'provider-native'}
+    if set(data['frameworks']) != candidates:
+        raise ValueError('invalid_framework_candidates')
+
+    def valid_number(value, low, high):
+        return (type(value) in (int, float) and math.isfinite(value)
+                and low <= value <= high)
+
+    for scores in data['frameworks'].values():
+        if (set(scores) != set(FRAMEWORK_LABELS)
+                or not all(valid_number(v, 1, 5) for v in scores.values())):
+            raise ValueError('invalid_framework_scores')
+    if set(data['usecases']) != {'escalation', 'rag', 'triage'}:
+        raise ValueError('invalid_framework_usecases')
+    for profile in data['usecases'].values():
+        for key, axes in (
+            ('weights', {'state', 'debug', 'ecosystem', 'lock-in'}),
+            ('subweights', {'exit-cost', 'runtime-fit'}),
+        ):
+            values = profile[key]
+            if (set(values) != axes
+                    or not all(valid_number(v, 0, 1) for v in values.values())
+                    or abs(sum(values.values()) - 1) >= 1e-9):
+                raise ValueError('invalid_framework_weights')
+    return data
+
+
+def framework_ranking(data, usecase):
+    profile = data['usecases'][usecase]
+    weights = profile['weights']
+    effective = {k: weights[k] for k in ('state', 'debug', 'ecosystem')}
+    effective.update({k: weights['lock-in'] * v
+                      for k, v in profile['subweights'].items()})
+    rows = []
+    for name, scores in data['frameworks'].items():
+        parts = {key: weight * scores[key] for key, weight in effective.items()}
+        rows.append(dict(framework=name, total=sum(parts.values()), breakdown=parts))
+    return sorted(rows, key=lambda row: (-row['total'], row['framework']))
+
+
+def select_framework(usecase, path='config/orchestration.yml'):
+    data = framework_policy(path)
+    rows = framework_ranking(data, usecase)
+    if (rows[0]['framework'] != data['usecases'][usecase]['selected']
+            or rows[0]['total'] - rows[1]['total'] <= 1e-9):
+        raise ValueError('framework_policy_drift')
+    return rows[0]['framework']
+
+
+def validate_framework_envelope(envelope):
+    if (not isinstance(envelope, dict)
+            or type(envelope.get('tenant_id')) is not int
+            or envelope['tenant_id'] <= 0
+            or not isinstance(envelope.get('trace_id'), str)
+            or not envelope['trace_id'].strip()):
+        raise ValueError('invalid_framework_scope')
+    budget = envelope.get('budget')
+    if (not isinstance(budget, dict)
+            or any(type(budget.get(key)) is not int or budget[key] <= 0
+                   for key in ('max_tokens', 'max_steps'))):
+        raise ValueError('invalid_framework_budget')
+
+
+async def run_framework_task(usecase, payload, envelope, *, adapters,
+                             path='config/orchestration.yml'):
+    """Adapters accept (payload, envelope); their runtimes meter the limits."""
+    validate_framework_envelope(envelope)
+    framework = select_framework(usecase, path)
+    adapter = adapters.get(framework)
+    if not callable(adapter):
+        raise ValueError('framework_adapter_unavailable')
+    trusted = copy.deepcopy(envelope)
+    supplied = copy.deepcopy(trusted)
+    result = await adapter(copy.deepcopy(payload), supplied)
+    if supplied != trusted:
+        raise ValueError('framework_envelope_mutated')
+    return dict(framework=framework, envelope=trusted, result=result)

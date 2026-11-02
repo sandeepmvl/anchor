@@ -97,3 +97,13 @@ async def run_ticket_chain(ticket, *, client=None, resolve_prompt=None,
         return await chain.ainvoke({'ticket': message}, config={
             'callbacks': [callback],
             'metadata': {'prompt_version': contract.version}})
+
+
+async def run_policy_triage(payload, envelope, **options):
+    from .orchestration import validate_framework_envelope
+    validate_framework_envelope(envelope)
+    trace = {'trace_id': envelope['trace_id']}
+    if 'request_id' in envelope:
+        trace['request_id'] = envelope['request_id']
+    result = await run_ticket_chain(payload, trace=trace, **options)
+    return result.model_dump()

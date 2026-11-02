@@ -84,7 +84,7 @@ class AnchorRetriever(BaseRetriever):
                 id_=str(chunk_id), text=hit['text'], metadata={
                     'document_chunk_id': chunk_id,
                     'tenant_id': self.tenant_id,
-                    'generation_id': result['generation_id'],
+                    'generation_id':result['generation_id'],
                 }), score=score))
         self.result = dict(tenant_id=self.tenant_id,
                            generation_id=result['generation_id'], hits=canonical)
@@ -152,13 +152,19 @@ class QueryEngineTool:
         self.evidence_budget = evidence_budget
         self.emit = emit
 
-    async def __call__(self, query):
+    async def __call__(self, query, *, envelope=None):
         if not isinstance(query, str) or not query.strip() or len(query.encode()) > 1800:
             raise ValueError('invalid_query')
+        if envelope is not None:
+            from .orchestration import validate_framework_envelope
+            validate_framework_envelope(envelope)
+            if envelope['tenant_id'] != self.tenant_id:
+                raise ValueError('query_engine_scope_mismatch')
         adapter = AnchorRetriever(self.retriever, self.tenant_id, self.top_k)
         identifier = uuid.uuid4().hex
+        trace_id = envelope['trace_id'] if envelope is not None else identifier
         synthesizer = AnchorSynthesizer(adapter, self.client, self.evidence_budget,
-                                        self.emit, identifier, identifier)
+                                        self.emit, identifier, trace_id)
         engine = RetrieverQueryEngine(adapter, response_synthesizer=synthesizer)
         response = await engine.aquery(query)
         decoded = json.loads(response.response)
@@ -171,3 +177,11 @@ class QueryEngineTool:
                              tenant_id=self.tenant_id,
                              generation_id=result['generation_id'])
                         for item in response.source_nodes])
+
+
+async def run_policy_query(payload, envelope, *, tool):
+    from .orchestration import validate_framework_envelope
+    validate_framework_envelope(envelope)
+    if tool.tenant_id != envelope['tenant_id']:
+        raise ValueError('query_engine_scope_mismatch')
+    return await tool(payload['query'], envelope=envelope)

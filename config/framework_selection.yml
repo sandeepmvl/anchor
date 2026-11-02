@@ -1,0 +1,26 @@
+version: 1
+frameworks:
+  LangChain: {state: 2, debug: 4, ecosystem: 4, exit-cost: 5, runtime-fit: 5}
+  LangGraph: {state: 5, debug: 5, ecosystem: 4, exit-cost: 5, runtime-fit: 1}
+  LlamaIndex: {state: 3, debug: 4, ecosystem: 5, exit-cost: 5, runtime-fit: 1}
+  AutoGen: {state: 4, debug: 3, ecosystem: 3, exit-cost: 5, runtime-fit: 1}
+  provider-native: {state: 1, debug: 4, ecosystem: 3, exit-cost: 1, runtime-fit: 5}
+usecases:
+  escalation:
+    selected: LangGraph
+    subject: Durable refund escalation with approval pause and resume
+    weights: {state: 0.50, debug: 0.30, ecosystem: 0.10, lock-in: 0.10}
+    subweights: {exit-cost: 0.80, runtime-fit: 0.20}
+    justification: 'LangGraph: state-model expressiveness represents approval transitions; debuggability/observability exposes saved progress. The cost is maintaining checkpoint and transition logic.'
+  rag:
+    selected: LlamaIndex
+    subject: Cited answers over tenant policy evidence
+    weights: {state: 0.05, debug: 0.15, ecosystem: 0.45, lock-in: 0.35}
+    subweights: {exit-cost: 0.90, runtime-fit: 0.10}
+    justification: 'LlamaIndex: ecosystem maturity favors query engines; exit-cost favors self-hostable orchestration. Other OSS candidates tie on exit-cost, and Anchor must still maintain citation validation.'
+  triage:
+    selected: LangChain
+    subject: Simple triage through the existing validated ticket chain
+    weights: {state: 0.02, debug: 0.30, ecosystem: 0.08, lock-in: 0.60}
+    subweights: {exit-cost: 0.05, runtime-fit: 0.95}
+    justification: 'LangChain: runtime-fit reuses the deployed chain; debuggability/observability retains named prompt, model and parser stages. This accepts a framework dependency for a simple call.'

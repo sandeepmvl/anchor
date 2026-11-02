@@ -17,3 +17,5 @@ rubric:
   parallel:
     independent: 4
   network/handoff: {handoff: 4}
+framework_selection:
+  policy: config/framework_selection.yml
