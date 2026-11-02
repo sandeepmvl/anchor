@@ -15,7 +15,12 @@ def main():
     parser.add_argument('--mode', choices=['continuous', 'static', 'window'], default='continuous')
     parser.add_argument('--compare', action='store_true')
     parser.add_argument('--sweep', action='store_true')
+    parser.add_argument('--kv-profile', choices=['unsafe', 'bounded'])
     args = parser.parse_args()
+    if args.kv_profile:
+        from ops.load.kv_cache_dashboard import simulate
+        print(json.dumps(simulate(args.kv_profile, args.concurrency), sort_keys=True))
+        return
     if args.sweep:
         first_miss = None
         for concurrency in (1, 10, 20, 50):

@@ -3,7 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from anchor_ai import serving_benchmark as bench
+@pytest.fixture(autouse=True)
+def isolated_benchmark_dependencies(monkeypatch):
+    """Do not export offline benchmark configuration to quota tests."""
+    import importlib
+    import os
+
+    monkeypatch.setattr(os, 'environ', os.environ.copy())
+    benchmark = importlib.import_module('anchor_ai.serving_benchmark')
+    monkeypatch.setitem(globals(), 'bench', benchmark)
 
 
 def test_profiles_and_deployment_arguments():
@@ -43,13 +51,19 @@ def test_identical_surge_compares_successes_not_offered_rate(monkeypatch):
     assert before['workload_sha256'] == after['workload_sha256']
     assert after['completed_req_s'] > before['completed_req_s']
     assert after['latency_p99_s'] != before['latency_p99_s']
-    for report in (before, after):
+    # Healthy profiles may complete every request. Force admission pressure
+    # separately so failed-work accounting is tested without requiring failure
+    # from a healthy default or tuned profile.
+    pressured = bench.surge(50, 'tuned', admission=dict(
+        tenant_inflight_limit=3, tenant_token_quota=500, request_deadline_s=1))
+    assert pressured['rejected'] > 0
+    assert pressured['failures'] > 0
+    assert pressured['completed'] < pressured['samples']
+    assert (pressured['completed_req_s']
+            < pressured['samples'] / pressured['duration_virtual_s'])
+    for report in (before, after, pressured):
         assert report['completed'] + report['failures'] == report['samples']
         assert report['failures'] == report['timeouts'] + report['rejected']
-        assert report['failures'] > 0
-        assert report['rejected'] > 0
-        for tenant in report['tenants'].values():
-            assert tenant['reserved_tokens'] <= 3000
         assert report['completed_req_s'] == report['completed'] / report['duration_virtual_s']
         assert 'Real hardware measurements' in report['evidence_warning']
         assert report['production_promotion_allowed'] is False

@@ -783,3 +783,19 @@ def emit_provider_resilience(record):
 
 ERRORS.update({'routing_deadline', 'routing_attempt_limit', 'routing_capacity',
                'routing_unavailable', 'routing_stream_unsupported', 'routing_tool_unsupported'})
+
+
+def emit_kv_admission(record):
+    """Content-free admission decisions inherit retrieval/tool/LLM trace context."""
+    if (set(record) != {'decision', 'active', 'reserved_bytes', 'fresh', 'cache_utilization'}
+            or record['decision'] not in {'admitted', 'metrics_unavailable', 'cache_pressure', 'capacity'}
+            or type(record['fresh']) is not bool
+            or any(type(record[k]) is not int or record[k] < 0
+                   for k in ('active', 'reserved_bytes'))):
+        raise ValueError('unsafe_kv_telemetry')
+    value = record['cache_utilization']
+    if value is not None and (type(value) not in (int, float)
+            or not math.isfinite(value) or not 0 <= value <= 1):
+        raise ValueError('unsafe_kv_telemetry')
+    with span('anchor.kv_admission', stage='llm') as item:
+        item.record['kv_admission'] = dict(record)

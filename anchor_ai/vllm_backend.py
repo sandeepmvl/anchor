@@ -100,6 +100,8 @@ class VllmBackend:
         self.transport = transport
         self.diagnostic = diagnostic or (lambda record: None)
         self.events = []
+        from anchor_ai.kv_cache import Admission, configuration
+        self.kv_admission = Admission(configuration())
 
     def key(self):
         if self.mode == 'offline':
@@ -117,6 +119,23 @@ class VllmBackend:
         self.diagnostic(record)
 
     async def send(self, request, payload):
+        """Bound every physical send; callers still own retries and tenant quotas."""
+        from anchor_ai.kv_cache import sample
+        from anchor_ai.observability import emit_kv_admission
+        if self.mode == 'offline':
+            # Explicit protocol fixture, never a live GPU measurement.
+            self.kv_admission.update(sample(self.kv_admission.clock()))
+        decision = self.kv_admission.acquire()
+        emit_kv_admission(decision)
+        if decision['decision'] != 'admitted':
+            return httpx.Response(503, request=request,
+                json={'error': {'code': 'kv_' + decision['decision']}})
+        try:
+            return await self._send(request, payload)
+        finally:
+            self.kv_admission.release()
+
+    async def _send(self, request, payload):
         """Also implements RoutingProvider's physical-adapter contract."""
         mapped = dict(payload, model=self.model)
         headers = {'content-type': 'application/json',
@@ -173,10 +192,18 @@ def validate_deployment(path='ops/deploy/vllm_service.yml'):
     expected = ['vllm', 'serve', '/srv/anchor/models/approved',
                 '--quantization', 'awq', '--served-model-name', MODEL,
                 '--host', '127.0.0.1', '--port', '8765',
-                '--max-model-len', '512',
-                '--max-num-seqs', str(profile['max_num_seqs']),
-                '--max-num-batched-tokens', str(profile['max_num_batched_tokens']),
-                '--enable-chunked-prefill', '--scheduling-policy', 'fcfs']
+                '--max-model-len', '512', '--max-num-seqs', str(profile['max_num_seqs']),
+                '--max-num-batched-tokens', str(profile['max_num_batched_tokens']), '--enable-chunked-prefill',
+                '--scheduling-policy', 'fcfs', '--block-size', '16',
+                '--gpu-memory-utilization', '0.85']
+    from anchor_ai.kv_cache import configuration
+    c = configuration()
+    for flag, key in (('--max-model-len', 'max_model_len'),
+                      ('--max-num-seqs', 'max_num_seqs'),
+                      ('--block-size', 'block_size'),
+                      ('--gpu-memory-utilization', 'gpu_memory_utilization')):
+        if str(c[key]) != expected[expected.index(flag) + 1]:
+            raise ValueError('kv_deployment_drift')
     if command != expected or spec['runtime'] != 'vllm==0.8.5':
         raise ValueError('invalid_vllm_deployment')
     if (spec['artifact']['format'] != 'awq'

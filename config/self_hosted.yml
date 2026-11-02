@@ -6,6 +6,23 @@ model_alias: tiny-llama
 samples: 8
 max_new_tokens: 32
 batching: single_request
+# Per-rank planning assumptions, not measured GPU evidence.
+kv_cache:
+  model:
+    layers: 22
+    num_key_value_heads: 4
+    head_dimension: 64
+    dtype: float16
+  tensor_parallel_size: 1
+  vram_bytes_per_rank: 4000000000
+  weights_bytes_per_rank: 2200000000
+  overhead_bytes_per_rank: 500000000
+  block_size: 16
+  gpu_memory_utilization: 0.85
+  max_model_len: 512
+  max_num_seqs: 4
+  max_metric_age_s: 5
+  pressure_threshold: 0.90
 # Preserve the earlier single-request benchmark; surge profiles are opt-in.
 batching_profiles:
   version: 1

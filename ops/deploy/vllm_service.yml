@@ -27,6 +27,10 @@ command:
   - --enable-chunked-prefill
   - --scheduling-policy
   - fcfs
+  - --block-size
+  - '16'
+  - --gpu-memory-utilization
+  - '0.85'
 # The command above is the committed default profile.
 # The benchmark renders and validates candidate arguments without deploying them.
 batching_profile: default
