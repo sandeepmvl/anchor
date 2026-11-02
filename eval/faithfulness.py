@@ -184,3 +184,36 @@ def heuristic_support(payload):
                  for sentence in sentences]
     score = sum(supported) / len(sentences) if citation_ok else 0.0
     return dict(groundedness=score, citation_support=score)
+
+
+CALIBRATION_CRITERIA = {'policy_accuracy', 'supporting_citation', 'action_honesty', 'refusal'}
+CALIBRATION_FIELDS = ('id', 'tenant_id', 'query', 'context', 'answer', 'citations', 'tool_record')
+
+
+def validate_calibration_result(result):
+    if not isinstance(result, dict) or set(result) != {'label', 'failed_criteria', 'evidence'}:
+        raise ValueError('invalid_calibration_contract')
+    failures = result['failed_criteria']
+    if (result['label'] not in {'Pass', 'Fail'} or not isinstance(failures, list)
+            or any(not isinstance(x, str) or x not in CALIBRATION_CRITERIA for x in failures)
+            or len(failures) != len(set(failures))
+            or (result['label'] == 'Fail') != bool(failures)
+            or not isinstance(result['evidence'], str)
+            or not result['evidence'].strip() or len(result['evidence']) > 1000):
+        raise ValueError('invalid_calibration_contract')
+    return result
+
+
+class RubricJudge:
+    def __init__(self, client, rubric, revision):
+        self.client, self.rubric, self.revision = client, rubric, revision
+
+    def score(self, row):
+        example = {key: row[key] for key in CALIBRATION_FIELDS}
+        if any(chunk['tenant_id'] != row['tenant_id'] for chunk in example['context']):
+            raise ValueError('invalid_evidence_scope')
+        # This independent calibration path receives authorized, already-redacted exports.
+        system = json.dumps(self.rubric, sort_keys=True)
+        prompt = json.dumps({'revision': self.revision, 'example': example}, sort_keys=True)
+        raw = self.client.complete(prompt, system=system, max_tokens=1024)
+        return validate_calibration_result(json.loads(raw))

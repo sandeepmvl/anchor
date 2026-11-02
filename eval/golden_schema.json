@@ -28,6 +28,25 @@
     "redacted": {"const": true},
     "labeler": {"type": "string"},
     "labeled_at": {"type": "string"},
-    "intake_sha256": {"type": "string"}
+    "intake_sha256": {"type": "string"},
+    "id": {"type": "string", "minLength": 1},
+    "split": {"enum": ["dev", "holdout"]},
+    "snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "$defs": {
+    "calibrationLabel": {
+      "type": "object",
+      "required": ["id", "origin", "label", "snapshot_example"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "origin": {"enum": ["synthetic_demo", "human_reviewed"]},
+        "label": {"enum": ["Fail", "Pass"]},
+        "snapshot_example": {
+          "type": "object",
+          "required": ["id", "split", "tenant_id", "query", "context", "answer", "citations", "tool_record", "tags"]
+        }
+      }
+    }
   }
 }

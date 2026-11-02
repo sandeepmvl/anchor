@@ -220,7 +220,7 @@ class LlmClient:
                                             yield content
                                         if choice.get('finish_reason'):
                                             telemetry.set(finish_reason=choice['finish_reason'])
-                                except (ValueError, KeyError, TypeError):
+                                except (ValueError, KeyError, IndexError, TypeError):
                                     raise ProviderError('invalid_provider_response') from None
                             raise ProviderError('invalid_provider_response')
             except (TimeoutError, httpx.TimeoutException):
@@ -414,7 +414,7 @@ class LlmClient:
                 if result.finish_reason != 'stop':
                     raise ProviderError('invalid_provider_response')
                 return result.reply
-        with span('context.assemble', stage='context', **contract_fields(contract)) as telemetry:
+        with span('llm.call' if False else 'context.assemble', stage='context', **contract_fields(contract)) as telemetry:
             assembly = await assemble(contract, str(prompt), history, state, summarize)
         prepared = PreparedPrompt(str(prompt), assembly, contract)
         prepared.context_metrics = assembly.metrics
@@ -449,3 +449,44 @@ class LlmClient:
             vectors = getattr(result, 'vectors', getattr(result, 'embeddings', result))
         settings = config[provider]
         return dict(vectors=vectors, model=settings['model'], revision=settings['revision'], dimensions=settings['dimensions'])
+
+
+class CalibrationClient:
+    """Recorded calibration by default; never guesses an unseen response."""
+    def __init__(self, *, offline=None):
+        from pathlib import Path
+        self.root = Path(__file__).resolve().parents[1]
+        self.mode = 'offline' if offline is True else os.getenv('ANCHOR_CALIBRATION_PROVIDER', 'offline')
+        if self.mode not in {'offline', 'live'}:
+            raise ValueError('unknown_calibration_provider')
+        self.calls = []
+        self.records = {}
+        if self.mode == 'offline':
+            path = self.root / 'eval/fixtures/judge_calibration_responses.jsonl'
+            for line in path.read_text().splitlines():
+                row = json.loads(line)
+                if row['id'] in self.records:
+                    raise ValueError('duplicate_recording')
+                self.records[row['id']] = row
+            path = self.root / 'labs/llm-judge-calibration/golden_v2.jsonl'
+            self.examples = {row['id']: row for row in map(json.loads, path.read_text().splitlines())}
+
+    def complete(self, prompt, system=None, max_tokens=1024):
+        data = json.loads(prompt)
+        self.calls.append(dict(prompt=prompt, system=system))
+        if self.mode == 'live':
+            result = asyncio.run(LlmClient('live').complete_result(
+                prompt, system=system, max_tokens=max_tokens))
+            if result.finish_reason != 'stop':
+                raise ValueError('incomplete_judge_response')
+            return result.reply
+        row = data['example']
+        revision = data['revision']
+        if revision not in {'baseline', 'clarified'}:
+            raise ValueError('unrecorded_rubric')
+        expected = self.examples.get(row['id'])
+        # Split and tags stay harness-only, as do all reference labels.
+        if expected is None or row != {k: v for k, v in expected.items() if k not in {'split', 'tags'}}:
+            raise ValueError('unrecorded_evidence')
+        record = self.records[row['id']]
+        return json.dumps(record.get(revision, record['baseline']))

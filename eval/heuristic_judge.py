@@ -74,3 +74,9 @@ def write_json(path, value):
     temporary = path.with_name(path.name + '.tmp')
     temporary.write_bytes(json_bytes(value))
     temporary.replace(path)
+
+
+def score_with_rubric(row, client, rubric, revision):
+    """Separate semantic contract; does not reinterpret legacy overlap scores."""
+    from eval.faithfulness import RubricJudge
+    return RubricJudge(client, rubric, revision).score(row)
