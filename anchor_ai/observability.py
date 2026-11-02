@@ -159,6 +159,7 @@ class Span:
     def finish(self):
         self.record.update(ended_at=now(), latency_ms=round((time.monotonic() - self.started) * 1000, 3))
         SINK(dict(self.record))
+        export_production_span(self.record)
 
 
 @contextmanager
@@ -799,3 +800,142 @@ def emit_kv_admission(record):
         raise ValueError('unsafe_kv_telemetry')
     with span('anchor.kv_admission', stage='llm') as item:
         item.record['kv_admission'] = dict(record)
+
+
+# A second, deliberately narrow export boundary. Historical diagnostics stay intact.
+# OTLP is OpenTelemetry's wire format; the local collector accepts its JSON form.
+PRODUCTION_STAGES = {'agent', 'retrieval', 'rerank', 'llm', 'tool', 'application'}
+PRODUCTION_NAMES = {
+    'python.bounded_agent', 'python.bounded_agent.model',
+    'python.bounded_agent.tool', 'python.bounded_agent.handoff',
+    'python.hybrid_retrieval', 'python.retrieval.dense',
+    'python.retrieval.sparse', 'python.retrieval.fusion',
+    'python.retrieval.rerank', 'python.reranker', 'python.tool',
+    'python.tool_llm', 'llm.call',
+}
+EXPORT_SINK = None  # Trusted injection seam for offline tests, never a request field.
+EXPORT_LOGGER = logging.getLogger('anchor.production.telemetry')
+
+
+def production_projection(record):
+    """Drop free text rather than trying to recognize every possible secret."""
+    name = record.get('name')
+    if name not in PRODUCTION_NAMES:
+        return None
+    stage = record.get('stage', 'application')
+    stage = stage if stage in PRODUCTION_STAGES else 'application'
+    status = 'error' if record.get('status') == 'error' else 'ok'
+    attributes = {'stage': stage, 'status': status}
+    # These are restricted trace attributes, never metric labels.
+    for key in ('tenant_id', 'conversation_id'):
+        value = record.get(key)
+        if type(value) is int and value > 0:
+            attributes[key] = value
+    value = record.get('abstained')
+    if type(value) is bool:
+        attributes['abstained'] = value
+    for key in ('pair_count', 'post_filter_count'):
+        value = record.get(key)
+        if type(value) is int and 0 <= value <= 10000:
+            attributes[key] = value
+    result = {key: record[key] for key in
+              ('trace_id', 'span_id', 'parent_span_id', 'started_at', 'ended_at')}
+    result.update(name=name, attributes=attributes,
+                  latency_ms=record['latency_ms'], tokens={}, cost_estimate=None)
+    for key in ('trace_id', 'span_id'):
+        size = 32 if key == 'trace_id' else 16
+        if not re.fullmatch('[0-9a-f]{' + str(size) + '}', result[key]) or int(result[key], 16) == 0:
+            raise ValueError('invalid_export_context')
+    parent = result['parent_span_id']
+    if parent is not None and (not re.fullmatch('[0-9a-f]{16}', parent) or int(parent, 16) == 0):
+        raise ValueError('invalid_export_context')
+    if (type(result['latency_ms']) not in (int, float)
+            or not math.isfinite(result['latency_ms']) or result['latency_ms'] < 0):
+        raise ValueError('invalid_export_duration')
+    # Usage belongs only to the physical model call, not every containing span.
+    if name == 'llm.call':
+        usage = record.get('tokens') or {}
+        for key in ('input', 'cached_input', 'cache_write_input', 'output'):
+            value = usage.get(key)
+            if type(value) is int and value >= 0:
+                result['tokens'][key] = value
+        value = record.get('cost_estimate')
+        if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+            result['cost_estimate'] = value
+    return result
+
+
+def metric_points(projected):
+    """Finite label domains; identities and arbitrary model IDs cannot become series."""
+    labels = {key: projected['attributes'][key] for key in ('stage', 'status')}
+    points = []
+    for direction, value in projected['tokens'].items():
+        points.append(('anchor_tokens', value, dict(labels, direction=direction)))
+    if projected['cost_estimate'] is not None:
+        points.append(('anchor_estimated_cost_usd', projected['cost_estimate'], labels))
+    return points
+
+
+def otlp_attributes(values):
+    def encode(value):
+        if type(value) is bool:
+            return {'boolValue': value}
+        if type(value) is int:
+            return {'intValue': str(value)}
+        return {'stringValue': value}
+    return [{'key': key, 'value': encode(value)} for key, value in values.items()]
+
+
+def otlp_payloads(projected):
+    def nanos(value):
+        return str(int(datetime.fromisoformat(value).timestamp() * 1000000000))
+    item = dict(traceId=projected['trace_id'], spanId=projected['span_id'],
+                name=projected['name'], kind=1,
+                startTimeUnixNano=nanos(projected['started_at']),
+                endTimeUnixNano=nanos(projected['ended_at']),
+                attributes=otlp_attributes(projected['attributes']),
+                status={'code': 2 if projected['attributes']['status'] == 'error' else 1})
+    if projected['parent_span_id']:
+        item['parentSpanId'] = projected['parent_span_id']
+    resource = {'attributes': otlp_attributes({'service.name': 'anchor-ai'})}
+    traces = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'spans': [item]}]}]}
+    metrics = []
+    for name, value, labels in metric_points(projected):
+        metrics.append({'name': name, 'sum': {'aggregationTemporality': 1,
+            'isMonotonic': True, 'dataPoints': [{'attributes': otlp_attributes(labels),
+                'timeUnixNano': item['endTimeUnixNano'], 'asDouble': value}]}})
+    return traces, {'resourceMetrics': [{'resource': resource,
+        'scopeMetrics': [{'metrics': metrics}]}]}
+
+
+def export_production_span(record):
+    import os
+    endpoint = os.getenv('ANCHOR_TELEMETRY_ENDPOINT')
+    if EXPORT_SINK is None and not endpoint:
+        return
+    projected = production_projection(record)
+    if projected is None:
+        return
+    if EXPORT_SINK is not None:
+        EXPORT_SINK(projected)
+        return
+    # The endpoint is deployment configuration, never customer-controlled input.
+    import urllib.request
+    try:
+        traces, metrics = otlp_payloads(projected)
+        for signal, payload in (('traces', traces), ('metrics', metrics)):
+            request = urllib.request.Request(endpoint.rstrip('/') + '/v1/' + signal,
+                data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request, timeout=.2) as response:
+                response.read(1024)
+    except Exception:
+        # Do not log exception messages, URLs, or rejected payloads.
+        EXPORT_LOGGER.warning('telemetry_delivery_failed')
+
+
+def require_observability_evidence(evidence):
+    """Offline fixtures cannot approve collector delivery or dashboard operation."""
+    required = {'rails_http_trace', 'collector_delivery', 'dashboard_queries', 'pii_export_scan'}
+    if (not isinstance(evidence, dict) or evidence.get('execution_mode') != 'live'
+            or any(evidence.get(key) is not True for key in required)):
+        raise ValueError('observability_release_evidence_missing')

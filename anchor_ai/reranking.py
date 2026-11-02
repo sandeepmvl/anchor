@@ -1,4 +1,5 @@
 import math
+import time
 import os
 import re
 from typing import Protocol
@@ -38,6 +39,12 @@ class Reranker:
         self.candidate_limit = candidate_limit
 
     def rerank(self, query, candidates):
+        from anchor_ai.observability import span
+        with span('python.reranker', stage='rerank') as item:
+            item.set(pair_count=min(len(candidates), self.candidate_limit))
+            return self._rerank(query, candidates)
+
+    def _rerank(self, query, candidates):
         rows = [dict(row) for row in candidates[:self.candidate_limit]]
         if not rows:
             return []
@@ -52,6 +59,19 @@ class Reranker:
                 raise ValueError('invalid_pair_scores')
             row['rerank_score'] = value
         return sorted(rows, key=lambda row: -row['rerank_score'])
+
+
+class DelayedTestScorer:
+    """Explicit test dependency; no environment switch can delay production."""
+    def __init__(self, scorer, *, test_only=False, delay_seconds=.15):
+        if test_only is not True or not 0 <= delay_seconds <= .5:
+            raise ValueError('test_only_delay_required')
+        self.scorer = scorer
+        self.delay_seconds = delay_seconds
+
+    def score_pairs(self, pairs):
+        time.sleep(self.delay_seconds)
+        return self.scorer.score_pairs(pairs)
 
 
 def make_reranker(settings=None):

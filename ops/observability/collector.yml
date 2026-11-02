@@ -1,0 +1,28 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+connectors:
+  spanmetrics:
+    namespace: anchor
+    dimensions:
+      - name: stage
+      - name: status
+    histogram:
+      unit: ms
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+exporters:
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+  prometheus:
+    endpoint: 0.0.0.0:8889
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/tempo, spanmetrics]
+    metrics:
+      receivers: [otlp, spanmetrics]
+      exporters: [prometheus]

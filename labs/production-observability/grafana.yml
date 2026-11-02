@@ -1,0 +1,12 @@
+apiVersion: 1
+datasources:
+  - name: Anchor metrics
+    uid: anchor-metrics
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+  - name: Anchor traces
+    uid: anchor-traces
+    type: tempo
+    access: proxy
+    url: http://tempo:3200

@@ -33,7 +33,14 @@ class AgentOrchestrationClient
     request["traceparent"] = traceparent
     request["Idempotency-Key"] = idempotency_key if idempotency_key
     request.body = JSON.generate(PiiRedactionClient.value(body))
-    response = @transport.call(@url, request)
+    response = AiTelemetry.span('rails.agent_orchestration',
+      context: AiTelemetry.current ? nil : AiTelemetry.context(
+        request_id: request_id, traceparent: traceparent), stage: 'transport') do |operation|
+      operation.headers.each { |key, value| request[key] = value }
+      result = @transport.call(@url, request)
+      operation.fail('ai_upstream_error', result.code.to_i) unless result.code.to_i.between?(200, 299)
+      result
+    end
     raise Unavailable, "orchestration_unavailable" unless response.code.to_i.between?(200, 299)
     value = JSON.parse(response.body)
     raise Unavailable, "invalid_orchestration_response" unless value.is_a?(Hash)

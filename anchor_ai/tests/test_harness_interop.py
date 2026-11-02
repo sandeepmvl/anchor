@@ -108,7 +108,10 @@ def test_local_loop_approval_and_trace(tmp_path, monkeypatch):
     tool_spans = [s for s in spans if s['name'] == 'python.bounded_agent.tool']
     root = next(s for s in spans if s['name'] == 'python.bounded_agent')
     assert model_spans and tool_spans
-    assert all(s['trace_id'] == root['trace_id'] for s in model_spans + tool_spans)
+    roots = {s['span_id']: s for s in spans if s['name'] == 'python.bounded_agent'}
+    for child in model_spans + tool_spans:
+        assert child['parent_span_id'] in roots
+        assert child['trace_id'] == roots[child['parent_span_id']]['trace_id']
     assert runtime.backend.calls.count('issue_refund') == 1
 
 

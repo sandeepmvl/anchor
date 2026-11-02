@@ -122,7 +122,7 @@ class HybridRuntime:
                 if remaining <= 0:
                     raise TimeoutError('rerank_deadline_exceeded')
                 with span('python.retrieval.rerank', tenant_id=self.tenant_id,
-                          generation_id=snapshot.generation_id, stage='retrieval') as item:
+                          generation_id=snapshot.generation_id, stage='rerank') as item:
                     begin = time.monotonic()
                     item.set(pair_count=len(hits))
                     hits = await asyncio.wait_for(asyncio.to_thread(

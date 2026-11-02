@@ -1,0 +1,27 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    profiles: [observability]
+    command: [--config=/etc/otelcol/config.yml]
+    volumes: ['./ops/observability/collector.yml:/etc/otelcol/config.yml:ro']
+    networks: [private]
+  tempo:
+    image: grafana/tempo:2.7.1
+    profiles: [observability]
+    command: [-config.file=/etc/tempo.yml]
+    volumes: ['./labs/production-observability/tempo.yml:/etc/tempo.yml:ro']
+    networks: [private]
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    profiles: [observability]
+    volumes: ['./labs/production-observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro']
+    networks: [private]
+  dashboard:
+    image: grafana/grafana:11.6.0
+    profiles: [observability]
+    ports: ['127.0.0.1:3001:3000']
+    volumes:
+      - './labs/production-observability/grafana.yml:/etc/grafana/provisioning/datasources/anchor.yml:ro'
+      - './labs/production-observability/dashboards.yml:/etc/grafana/provisioning/dashboards/anchor.yml:ro'
+      - './ops/observability/ticket_dashboard.json:/var/lib/grafana/dashboards/ticket_dashboard.json:ro'
+    networks: [private, edge]

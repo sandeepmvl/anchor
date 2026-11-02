@@ -60,6 +60,37 @@ class AiTelemetry
       Thread.current[:anchor_ai_span]
     end
 
+    def export_production(record)
+      endpoint = ENV['ANCHOR_TELEMETRY_ENDPOINT']
+      return if endpoint.to_s.empty?
+      require 'net/http'
+      require 'uri'
+      names = %w[rails.agent_orchestration rails.request rails.transport]
+      return unless names.include?(record[:name])
+      attributes = [{key: 'stage', value: {stringValue: 'transport'}},
+        {key: 'status', value: {stringValue: record[:status] == 'error' ? 'error' : 'ok'}}]
+      %i[tenant_id conversation_id].each do |key|
+        value = record[key]
+        attributes << {key: key.to_s, value: {intValue: value.to_s}} if value.is_a?(Integer) && value.positive?
+      end
+      item = {traceId: record[:trace_id], spanId: record[:span_id], name: record[:name], kind: 3,
+        startTimeUnixNano: (Time.iso8601(record[:started_at]).to_r * 1_000_000_000).to_i.to_s,
+        endTimeUnixNano: (Time.iso8601(record[:ended_at]).to_r * 1_000_000_000).to_i.to_s,
+        attributes: attributes, status: {code: record[:status] == 'error' ? 2 : 1}}
+      item[:parentSpanId] = record[:parent_span_id] if record[:parent_span_id]
+      payload = {resourceSpans: [{resource: {attributes: [
+        {key: 'service.name', value: {stringValue: 'anchor-rails'}}]}, scopeSpans: [{spans: [item]}]}]}
+      uri = URI.join(endpoint.delete_suffix('/') + '/', 'v1/traces')
+      request = Net::HTTP::Post.new(uri)
+      request['Content-Type'] = 'application/json'
+      request.body = JSON.generate(payload)
+      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == 'https',
+        open_timeout: 0.2, read_timeout: 0.2) { |http| http.request(request) }
+    rescue StandardError
+      # No exception messages or payloads in the delivery diagnostic.
+      $stderr.puts('telemetry_delivery_failed')
+    end
+
     def span(name, context: nil, **fields)
       previous = current
       ctx = context || (previous ? previous.child_context : self.context)
@@ -151,6 +182,7 @@ class AiTelemetry
         inclusive_ms: elapsed * 1000,
         exclusive_ms: [elapsed - covered, 0].max * 1000)
       AiTelemetry.sink.call(@record.dup)
+      AiTelemetry.export_production(@record)
     end
   end
 end

@@ -417,7 +417,10 @@ class RailsOrderBackend:
                 raise PermissionError('approval_required')
             body.update(approval_receipt=execution.approval_receipt,
                         idempotency_key=idempotency_key)
-        response = await self.transport('/api/tool_actions', body, execution.session_cookie)
+        # Transport receives credentials but telemetry receives only scoped timing.
+        with span('python.tool', stage='tool', tenant_id=scope.tenant_id,
+                  conversation_id=scope.conversation_id):
+            response = await self.transport('/api/tool_actions', body, execution.session_cookie)
         if not isinstance(response, dict) or response.get('ok') is not True:
             raise PermissionError('backend_authorization_denied')
         return response['data']

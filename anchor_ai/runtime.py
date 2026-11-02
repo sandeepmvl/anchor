@@ -43,7 +43,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import yaml
 from anchor_ai.contracts import AgentRequest, VerifiedExecution
-from anchor_ai.observability import span, trajectory_decision, model_call
+from anchor_ai.observability import span, trajectory_decision, model_call, CURRENT
 from anchor_ai.orchestration import select_flow, worker_for, propose
 
 ACTIONS = ['retrieve', 'lookup_order', 'check_refund', 'issue_refund']
@@ -169,8 +169,9 @@ class BoundedRuntime:
                               proposed_action=s['arguments'], idempotency_key=s['key'],
                               tokens=s['tokens'], steps=s['steps'], calls=s['calls'])
         self.event(s, 'escalation', reason=reason, persisted=True)
-        ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'],
-               'parent_span_id': s['trace_id'][:16]}
+        active = CURRENT.get()
+        ctx = None if active else {'trace_id': s['trace_id'], 'request_id': s['run_id'],
+                                    'parent_span_id': None}
         with span('python.bounded_agent.handoff', ctx=ctx, tenant_id=s['tenant_id'],
                   conversation_id=s['conversation_id']):
             digest = argument_fingerprint(s['arguments'])
@@ -234,7 +235,8 @@ class BoundedRuntime:
                     [scope.tenant_id, scope.conversation_id, req.run_id, args],
                     sort_keys=True).encode()).hexdigest()
                 s = dict(run_id=req.run_id, tenant_id=scope.tenant_id,
-                         conversation_id=scope.conversation_id, trace_id=key[:32],
+                         conversation_id=scope.conversation_id,
+                         trace_id=(CURRENT.get().record['trace_id'] if CURRENT.get() else key[:32]),
                          strategy=strategy, message=req.message, arguments=args,
                          key=key, digest=key, status='running', phase=0,
                          plan=ACTIONS[:] if req.ticket_type == 'multi-step refund' else ['retrieve'],
@@ -255,7 +257,10 @@ class BoundedRuntime:
                 return self.stop(s, 'denied', 'jailbreak_detected')
             self.event(s, 'memory_read', records=len(s['memory']))
             self.save(s)
-            ctx = {'trace_id': s['trace_id'], 'request_id': s['run_id'], 'parent_span_id': None}
+            # A resumed workflow retains its durable run identity, but this HTTP
+            # execution belongs to the current caller's trace, not a synthetic root.
+            ctx = None if CURRENT.get() else {
+                'trace_id': s['trace_id'], 'request_id': s['run_id'], 'parent_span_id': None}
             with span('python.bounded_agent', ctx=ctx, stage='agent', tenant_id=scope.tenant_id,
                       conversation_id=scope.conversation_id):
                 return await self.loop(scope, s)

@@ -8,6 +8,7 @@ x-rails-environment: &rails-environment
   ANCHOR_AI_BASE_URL: http://ai-runtime:8000
   AI_RUNTIME_URL: http://ai-runtime:8000
   ANCHOR_LLM_PROVIDER: offline
+  ANCHOR_TELEMETRY_ENDPOINT: ${ANCHOR_TELEMETRY_ENDPOINT:-}
 services:
   database:
     image: anchor-ai:lesson3754
@@ -33,6 +34,7 @@ services:
     environment:
       ANCHOR_AI_SECRET: ${ANCHOR_AI_SECRET:?supply ANCHOR_AI_SECRET}
       ANCHOR_DEPLOYMENT_CONFIG: config/provider_routing.yml
+      ANCHOR_TELEMETRY_ENDPOINT: ${ANCHOR_TELEMETRY_ENDPOINT:-}
       ANCHOR_DEPLOY_ROUTE: fake
       ANCHOR_LLM_PROVIDER: offline
     networks: [private]

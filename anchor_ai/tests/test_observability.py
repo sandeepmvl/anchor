@@ -158,6 +158,37 @@ def test_trajectory_projection_preserves_scope_and_span_tree(captured, delegated
         assert forbidden not in text
 
 
+def test_production_metrics_have_bounded_labels(captured):
+    exported = []
+    previous = obs.EXPORT_SINK
+    obs.EXPORT_SINK = exported.append
+    try:
+        with obs.span('llm.call', stage='llm', tenant_id=1, conversation_id=7) as item:
+            item.set(tokens={'input': 24, 'output': 14}, cost_estimate=.000012)
+        projected = exported[0]
+        assert projected['attributes']['tenant_id'] == 1
+        assert projected['attributes']['conversation_id'] == 7
+        points = obs.metric_points(projected)
+        assert points
+        for _, _, labels in points:
+            assert set(labels) <= {'stage', 'status', 'direction'}
+            assert 'tenant_id' not in labels and 'conversation_id' not in labels
+        traces, metrics = obs.otlp_payloads(projected)
+        assert 'tenant_id' in json.dumps(traces)
+        assert 'tenant_id' not in json.dumps(metrics)
+        assert 'conversation_id' not in json.dumps(metrics)
+    finally:
+        obs.EXPORT_SINK = previous
+
+
+def test_observability_release_refuses_offline_evidence():
+    for evidence in (None, {}, {'execution_mode': 'offline',
+            'rails_http_trace': True, 'collector_delivery': True,
+            'dashboard_queries': True, 'pii_export_scan': True}):
+        with pytest.raises(ValueError, match='observability_release_evidence_missing'):
+            obs.require_observability_evidence(evidence)
+
+
 def test_decision_projection_rejects_unrestricted_text(captured):
     from eval.trajectory_eval import fingerprint
     with obs.span('root', tenant_id=1):
