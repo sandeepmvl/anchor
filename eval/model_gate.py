@@ -9,6 +9,20 @@ from anchor_ai.training import experiment, recorded_evaluation
 
 
 def replay(candidate):
+    if candidate == 'distilled-labels':
+        from anchor_ai.dataset_quality import read_rows
+        from anchor_ai.distillation import evaluate
+        path = Path(__file__).resolve().parent / 'finetune/fixtures/teacher_student_predictions.jsonl'
+        report, _ = evaluate(read_rows(path))
+        return {'evaluation': report,
+                'decision': {'active': False, 'model_override': None,
+                             'refund_authorized': False,
+                             'blockers': ['constructed_teacher_evidence',
+                                          'no_locked_release_evaluation',
+                                          'golden_dataset_and_judge_regressions_required',
+                                          'retrieval_and_agent_regressions_required']},
+                'retrieval_evidence': 'not_run_for_a_trained_candidate',
+                'deployment_approved': False}
     manifest = experiment()
     if candidate != manifest['candidate']:
         raise ValueError('unknown_candidate')

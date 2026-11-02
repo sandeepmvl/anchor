@@ -129,3 +129,28 @@ def recorded_evaluation(manifest, policy=None):
                       and failures <= limits['max_critical_failures'],
             'paired_replies': [{**row, 'input': heldout[row['id']]['input']}
                                for row in replies]}
+
+
+def distillation_manifest(rows, policy=None, balanced=False):
+    from anchor_ai.dataset_quality import audit_distillation
+    policy = load_policy() if policy is None else policy
+    spec = policy['distillation']
+    splits = audit_distillation(rows, spec)
+    mappings = {task: {label: i for i, label in enumerate(labels)}
+                for task, labels in spec['labels'].items()}
+    contract = {'teacher': spec['teacher'], 'rubric': spec['rubric_version'],
+                'teacher_tasks': list(mappings), 'student_label2id': mappings,
+                'student_id2label': {t: {str(i): label for label, i in m.items()}
+                                     for t, m in mappings.items()},
+                'student': 'TF-IDF + logistic regression, one pipeline per task',
+                'class_weight': 'balanced' if balanced else None,
+                'confidence_threshold': spec['confidence_threshold'],
+                'max_f1_gap': spec['max_f1_gap'],
+                'lineage': {s: digest(values) for s, values in splits.items()}}
+    return {'candidate': spec['candidate'], 'experiment_id': digest(contract),
+            'contract': contract, 'evidence_status': RECORDED,
+            'counts': {s: len(values) for s, values in splits.items()},
+            'supervision': 'reviewed teacher hard labels only; independent human evaluation',
+            'excluded_tasks': ['policy_answering', 'tool_authorization', 'generation'],
+            'training_release': False, 'deployment_approved': False,
+            'split_audit': 'family and exact checks; human near-duplicate review still required'}

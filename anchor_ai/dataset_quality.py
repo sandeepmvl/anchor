@@ -213,3 +213,48 @@ def filter_rows(raw, seed, registry, policy):
     summary = synthetic_batch_decision(len(raw), len(rejected), real, existing, len(accepted), policy)
     summary.update(generated=len(raw), accepted=len(accepted), quarantined=len(rejected))
     return accepted, rejected, summary
+
+
+def audit_distillation(rows, spec):
+    if not rows:
+        raise ValueError('empty_distillation')
+    tenants = {r.get('tenant_id') for r in rows}
+    if len(tenants) != 1 or None in tenants:
+        raise ValueError('tenant_boundary')
+    ids, families, texts = set(), {}, {}
+    splits = {s: [] for s in ('train', 'validation', 'held_out')}
+    for row in rows:
+        identifier, split = row['id'], row['split']
+        if identifier in ids or split not in splits:
+            raise ValueError('duplicate_id_or_invalid_split')
+        ids.add(identifier)
+        text = ' '.join(row['input'].lower().split())
+        if not text or has_pii(row) or row.get('pii_detected') is not False:
+            raise ValueError('invalid_or_unsanitized_ticket')
+        if families.setdefault(row['family'], split) != split:
+            raise ValueError('cross_split_family')
+        if texts.setdefault(text, split) != split:
+            raise ValueError('cross_split_exact_duplicate')
+        if row.get('training_permitted') is not True or row.get('reviewed') is not True:
+            raise ValueError('unreviewed_or_unpermitted')
+        expected = 'reviewed_teacher' if split == 'train' else 'independent_human'
+        if row.get('label_source') != expected:
+            raise ValueError('incorrect_label_source')
+        for task, labels in spec['labels'].items():
+            if row['labels'].get(task) not in labels:
+                raise ValueError('invalid_task_label')
+            if split == 'held_out' and row['teacher'].get(task) not in labels:
+                raise ValueError('invalid_teacher_label')
+        if split == 'held_out':
+            if row.get('teacher_source') != 'constructed_recording_not_measured':
+                raise ValueError('teacher_provenance')
+            for key in ('teacher_ms', 'teacher_usd'):
+                if not isinstance(row.get(key), (int, float)) or not math.isfinite(row[key]) or row[key] <= 0:
+                    raise ValueError('invalid_teacher_cost')
+        splits[split].append(row)
+    if any(not values for values in splits.values()):
+        raise ValueError('empty_split')
+    for task, labels in spec['labels'].items():
+        if any({r['labels'][task] for r in splits[s]} != set(labels) for s in splits):
+            raise ValueError('missing_class_coverage')
+    return splits

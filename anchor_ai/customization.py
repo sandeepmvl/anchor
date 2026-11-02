@@ -138,3 +138,19 @@ def sft_activation_decision(manifest, evaluation=None, retrieval=None, checkpoin
             'active': active, 'blockers': blockers,
             'model_override': checkpoint if active else None,
             'refund_authorized': False}
+
+
+def distillation_decision(teacher, student, route, spec):
+    gaps = {label: teacher['per_class'][label]['f1-score']
+            - student['per_class'][label]['f1-score'] for label in spec['labels']}
+    weak = [label for label, gap in gaps.items() if gap > spec['max_f1_gap']]
+    economical = (student['estimated_usd_per_ticket'] < teacher['usd_per_ticket']
+                  and student['latency']['p95_ms'] < teacher['latency']['p95_ms'])
+    decision = 'accept' if not weak and economical else ('route' if route['passes'] else 'reject')
+    return {'decision': decision, 'weak_classes': weak, 'f1_gaps': gaps,
+            'economical': economical, 'driving_figure': (
+                {'largest_f1_gap': max(gaps.values())} if weak else
+                {'student_p95_ms': student['latency']['p95_ms'],
+                 'estimated_usd_per_ticket': student['estimated_usd_per_ticket']}),
+            'advisory_only': True, 'deployment_approved': False,
+            'refund_authorized': False, 'model_override': None}

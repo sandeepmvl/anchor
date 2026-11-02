@@ -82,3 +82,17 @@ sft:
     - {id: v1, family: validation-decline, split: validation, source: curated, status: recorded_approved, input: 'Opened return at 70 days; policy permits unopened items within 30 days.', output: 'This does not meet the stated criteria. We can request human review.'}
     - {id: h1, family: heldout-return, split: held_out, source: curated, status: recorded_approved, input: 'Sealed item at 12 days; current policy allows unopened returns within 30 days.', output: 'Within the window. Please provide your order reference.'}
     - {id: h2, family: heldout-review, split: held_out, source: curated, status: recorded_approved, input: 'Opened item at 45 days; policy permits unopened returns within 30 days.', output: 'This is outside the stated criteria. We can request human review.'}
+
+distillation:
+  candidate: distilled-labels
+  teacher: constructed-support-teacher-v1
+  rubric_version: intent-tone-v1
+  labels:
+    intent: [refund, dispute]
+    tone: [neutral, frustrated]
+  max_f1_gap: 0.10
+  confidence_threshold: 0.70
+  hourly_usd: 0.10
+  enabled: false
+  permitted_tasks: [intent, tone]
+  training_release: false

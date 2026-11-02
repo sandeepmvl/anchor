@@ -65,11 +65,12 @@ def make_analyzer():
 
 
 class QueryAnalyzer:
-    def __init__(self, client, max_queries=3, deadline_seconds=1):
+    def __init__(self, client, max_queries=3, deadline_seconds=1, classifier=None):
         if type(max_queries) is not int or not 1 <= max_queries <= 3:
             raise ValueError('invalid_query_cap')
         if not 0 < deadline_seconds <= 10:
             raise ValueError('invalid_analysis_deadline')
+        self.classifier = classifier
         self.client = client
         self.max_queries = max_queries
         self.deadline_seconds = deadline_seconds
@@ -112,3 +113,21 @@ class QueryAnalyzer:
             item.set(analysis_calls=calls, subquery_count=len(plan.queries),
                      analysis_fallback=plan.fallback, analysis_reason=plan.reason)
             return plan
+
+    async def analyze_with_classification(self, ticket, task, tenant_id):
+        original = sanitize(ticket)
+        classification = {'task': task, 'prediction': None, 'confidence': None,
+                          'fallback': True, 'reason': 'classifier_disabled'}
+        if task not in ('intent', 'tone'):
+            classification['reason'] = 'unsupported_task'
+        elif self.classifier is not None:
+            try:
+                classification = self.classifier.classify(original, task, tenant_id)
+            except Exception:
+                classification['reason'] = 'classifier_error'
+        # A label never replaces query planning or crosses into answering/authorization.
+        plan = await self.analyze(original)
+        return {'classification': classification, 'plan': plan.model_dump(),
+                'fallback_target': 'existing_query_analyzer' if classification['fallback'] else None,
+                'policy_answer': None, 'refund_authorized': False,
+                'tool_authorized': False, 'model_override': None}
