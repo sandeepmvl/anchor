@@ -6,6 +6,22 @@ require "erb"
 class LlmClient
   CANNED_REPLY = "Anchor stub: thanks for your message, a support reply is on its way."
 
+  class ContextMessage < String
+    attr_reader :prompt_contract, :context_options
+    def initialize(message, contract, options)
+      super(message)
+      @prompt_contract, @context_options = contract, options
+    end
+  end
+
+  class ContextReply < String
+    attr_reader :context_state
+    def initialize(reply, state)
+      super(reply)
+      @context_state = state
+    end
+  end
+
   class BoundaryError < StandardError
     attr_reader :code, :status, :retryable, :retry_after, :details
 
@@ -61,6 +77,7 @@ class LlmClient
       span.headers.each { |key, value| request[key] = value }
       payload = { version: 'v1', conversation_id: 1, message: message, tenant_id: 1 }
       payload[:prompt_contract] = contract unless contract.nil?
+      forward_context(payload, message)
       request.body = JSON.generate(payload)
       http.start do
         http.request(request) do |response|
@@ -112,7 +129,6 @@ class LlmClient
       raise ArgumentError, "invalid service URL"
     end
     uri = URI.join(uri.to_s, "structured_replies") if structured
-
     http = Net::HTTP.new(uri.host, uri.port)
     http.use_ssl = uri.scheme == "https"
     http.open_timeout = positive_timeout(config.fetch("open_timeout"))
@@ -124,6 +140,7 @@ class LlmClient
     span.headers.each { |key, value| request[key] = value }
     payload = { version: 'v1', conversation_id: 1, message: message, tenant_id: 1 }
     payload[:prompt_contract] = contract unless structured || contract.nil?
+    forward_context(payload, message) unless structured
     request.body = JSON.generate(payload)
     response = http.request(request)
     status = response.code.to_i
@@ -144,6 +161,10 @@ class LlmClient
     valid = data.is_a?(Hash) && data["reply"].is_a?(String) &&
       data["tokens"].is_a?(Integer) && data["tokens"] >= 0
     fail_boundary("ai_invalid_response", 502) unless valid
+    if data.key?("context_state")
+      validate_context_state(data["context_state"])
+      return ContextReply.new(data.fetch("reply"), data.fetch("context_state"))
+    end
     data.fetch("reply")
   rescue Net::OpenTimeout
     fail_boundary("ai_connect_timeout", 504)
@@ -155,6 +176,18 @@ class LlmClient
     fail_boundary("ai_invalid_response", 502)
   rescue KeyError, ArgumentError
     fail_boundary("ai_configuration_error", 503)
+  end
+
+  def forward_context(payload, message)
+    payload.merge!(message.context_options) if message.respond_to?(:context_options)
+  end
+
+  def validate_context_state(state)
+    valid = state.is_a?(Hash) && state.keys.sort == %w[folded_position prompt_version summary] &&
+      state['summary'].is_a?(String) && state['summary'].bytesize <= 300_000 &&
+      state['folded_position'].is_a?(Integer) && state['folded_position'] >= 0 &&
+      (state['prompt_version'].nil? || /\Asummary:v[1-9][0-9]*\z/.match?(state['prompt_version'].to_s))
+    fail_boundary('ai_invalid_response', 502) unless valid
   end
 
   def structured_failure(response)

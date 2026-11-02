@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 
 ReasoningEffort = Literal['off', 'low', 'high']
 
@@ -29,6 +29,20 @@ class ChatMessage(str):
         return value
 
 
+class HistoryTurn(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    position: int = Field(gt=0)
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=100000)
+
+
+class SummaryState(BaseModel):
+    model_config = ConfigDict(strict=True, extra='forbid', frozen=True)
+    summary: str = Field(default='', max_length=100000)
+    prompt_version: str | None = Field(default=None, pattern=r'^summary:v[1-9][0-9]*$')
+    folded_position: int = Field(default=0, ge=0)
+
+
 class InferRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid')
     version: Literal['v1']
@@ -36,6 +50,8 @@ class InferRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     tenant_id: int = Field(gt=0)
     prompt_contract: PromptContract | None = None
+    history: list[HistoryTurn] | None = Field(default=None, max_length=1000)
+    summary_state: SummaryState | None = None
 
     @field_validator('message')
     @classmethod
@@ -48,6 +64,17 @@ class InferRequest(BaseModel):
     def attach_chat_contract(self):
         if self.prompt_contract is not None:
             self.message = ChatMessage(self.message, self.prompt_contract)
+        if self.history is not None or self.summary_state is not None:
+            if self.prompt_contract is None:
+                raise ValueError('context requires a pinned chat contract')
+            positions = [row.position for row in self.history or []]
+            if positions != sorted(set(positions)):
+                raise ValueError('history positions must be strictly increasing')
+            try:
+                from .context import attach_context
+            except ImportError:
+                from context import attach_context
+            attach_context(self)
         return self
 
 
@@ -86,6 +113,14 @@ class InferResponse(BaseModel):
     usage: Usage
     finish_reason: str
     attempts: int = Field(ge=1)
+    context_state: SummaryState | None = None
+
+    @model_serializer(mode='wrap')
+    def omit_absent_context(self, handler):
+        result = handler(self)
+        if self.context_state is None:
+            result.pop('context_state', None)
+        return result
 
 
 class TriageLabels(BaseModel):

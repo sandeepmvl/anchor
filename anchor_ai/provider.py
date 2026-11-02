@@ -33,11 +33,8 @@ def structured_record(ticket):
 
 class ProviderError(Exception):
     def __init__(self, code, status=502, retryable=False, retry_after=None, attempts=0):
-        self.code = code
-        self.status = status
-        self.retryable = retryable
-        self.retry_after = retry_after
-        self.attempts = attempts
+        self.code, self.status, self.retryable = code, status, retryable
+        self.retry_after, self.attempts = retry_after, attempts
         super().__init__(code)
 
     def detail(self):
@@ -84,15 +81,13 @@ class ReplayProvider:
                         raise KeyError('unrecorded_limit')
                     run = ticket['limited']
                 mapped = {'off': 'none', 'low': 'low', 'high': 'high'}[effort]
-                self.expected_reasoning = {
-                    'model': data['model'], 'reasoning_effort': mapped,
-                    'max_completion_tokens': max_tokens}
+                self.expected_reasoning = {'model': data['model'], 'reasoning_effort': mapped,
+                                           'max_completion_tokens': max_tokens}
                 self.expected_messages = [{'role': 'user', 'content': ticket['ticket']}]
                 self.fixture_latency_ms = run['fixture_latency_ms']
-                body = {
-                    'model': data['model'],
-                    'choices': [{'message': {'content': '' if limited else json.dumps(run['labels'])},
-                                 'finish_reason': 'length' if limited else 'stop'}],
+                body = {'model': data['model'], 'choices': [{'message': {
+                    'content': '' if limited else json.dumps(run['labels'])},
+                    'finish_reason': 'length' if limited else 'stop'}],
                     'usage': {'prompt_tokens': run['input'], 'completion_tokens': run['output'],
                               'total_tokens': run['input'] + run['output'],
                               'completion_tokens_details': {'reasoning_tokens': run['reasoning']}}}
@@ -106,9 +101,7 @@ class ReplayProvider:
                 tickets = json.loads(TRIAGE_TICKETS.read_text())
                 ticket = next(item for item in tickets if item['id'] == fixture_id)
                 labels = json.loads(TRIAGE_RESPONSES.read_text())[task][variant][fixture_id]
-                self.expected_messages = [
-                    {'role': 'user', 'content': render(variant, ticket['ticket'])}
-                ]
+                self.expected_messages = [{'role': 'user', 'content': render(variant, ticket['ticket'])}]
                 self.sequence = json.loads(FIXTURES.read_text())['triage']
                 self.sequence[0]['body']['choices'][0]['message']['content'] = json.dumps(labels)
             except (KeyError, StopIteration, ValueError, TypeError):
@@ -189,7 +182,6 @@ def retry_after(headers):
 
 
 def safe_retry_after(value):
-    # Never forward a shorter minimum. Unrepresentable hints are omitted.
     if value is None or not math.isfinite(value) or not 0 <= value <= 60:
         return None
     return math.ceil(value)
@@ -208,8 +200,7 @@ def classify(response):
         if code == 'insufficient_quota':
             return ProviderError('provider_quota_exhausted', status=429)
         if code in {'rate_limit_exceeded', 'slow_down'}:
-            return ProviderError('provider_rate_limited', status=429,
-                                 retryable=True, retry_after=hint)
+            return ProviderError('provider_rate_limited', status=429, retryable=True, retry_after=hint)
         return ProviderError('provider_unknown_429', status=429)
     codes = {400: 'provider_bad_request', 401: 'provider_auth_failed',
              403: 'provider_forbidden', 404: 'provider_not_found'}
@@ -223,6 +214,12 @@ class Delta:
 
 
 async def stream_tokens(provider, message):
+    if isinstance(provider, ContextReplayProvider):
+        text = provider.context_reply({'messages': message.context_messages})
+        for start in range(0, len(text), 16):
+            yield Delta(text=text[start:start + 16])
+        yield Delta(stop='stop')
+        return
     if isinstance(provider, ReplayProvider):
         for text in ['Refunds ', 'take ', 'five ', 'days.']:
             await asyncio.sleep(0.12)
@@ -230,10 +227,12 @@ async def stream_tokens(provider, message):
         yield Delta(stop='stop')
         return
     payload = {
-        'model': os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
-        'messages': [{'role': 'user', 'content': message}],
-        'max_tokens': 256, 'stream': True,
+        'model': getattr(message, 'context_model', os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')),
+        'messages': getattr(message, 'context_messages', [{'role': 'user', 'content': message}]),
+        'max_tokens': getattr(message, 'context_max_tokens', 256), 'stream': True,
     }
+    if hasattr(message, 'context_temperature'):
+        payload['temperature'] = message.context_temperature
     # Never retry a stream: that could repeat already disclosed text.
     try:
         async with provider.client() as client:
@@ -270,3 +269,40 @@ async def stream_tokens(provider, message):
         raise ProviderError('provider_timeout') from None
     except httpx.TransportError:
         raise ProviderError('provider_transport_error') from None
+
+
+class ContextReplayProvider:
+    def __init__(self):
+        self.records = json.loads(FIXTURES.with_name('context_responses.json').read_text())
+        self.requests = []
+
+    def key(self):
+        return 'offline-context-key'
+
+    def context_reply(self, payload):
+        source = '\n'.join(m['content'] for m in payload['messages'][1:])
+        known = ('receipt Friday' in source or 'receipt Friday.' in source)
+        summary = not payload['messages'][0]['content'].startswith('<system>')
+        if summary:
+            key = 'summary_with_commitment' if known else 'summary_without_commitment'
+        else:
+            key = 'reply_with_commitment' if known else 'reply_without_commitment'
+        return self.records[key]
+
+    def send(self, request):
+        try:
+            from .context import request_count, count
+        except ImportError:
+            from context import request_count, count
+        payload = json.loads(request.content)
+        self.requests.append(payload)
+        reply = self.context_reply(payload)
+        input_tokens, output_tokens = request_count(payload['messages']), count(reply)
+        return httpx.Response(200, json={
+            'model': payload['model'],
+            'choices': [{'message': {'content': reply}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': input_tokens, 'completion_tokens': output_tokens,
+                      'total_tokens': input_tokens + output_tokens}})
+
+    def client(self):
+        return httpx.AsyncClient(transport=httpx.MockTransport(self.send), trust_env=False)

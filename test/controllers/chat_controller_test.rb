@@ -30,11 +30,9 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
         calls << event.binding.local_variable_get(:message)
       end
     end
-
     trace.enable do
       post "/chat", params: { message: "Where is my order?" }, as: :json
     end
-
     assert_equal 200, response.status
     assert_equal "application/json", response.media_type
     assert_equal({ "reply" => LlmClient::CANNED_REPLY }, JSON.parse(response.body))
@@ -89,6 +87,26 @@ class ChatControllerTest < ActionDispatch::IntegrationTest
     assert_equal 502, response.status
     assert_equal "application/json", response.media_type
     assert_equal({ "error" => "ai_auth_rejected" }, JSON.parse(response.body))
+    assert_requested call, times: 1
+  end
+
+  test "optional history and summary state cross the existing HTTP boundary" do
+    Rails.configuration.x.llm[:provider] = "http"
+    history = [{ "position" => 3, "role" => "user", "content" => "Receipt update" }]
+    state = { "summary" => "Mira promised a receipt Friday.",
+      "prompt_version" => "summary:v1", "folded_position" => 2 }
+    expected = { "version" => "v1", "conversation_id" => 1, "tenant_id" => 1,
+      "message" => "Where is my order?", "history" => history, "summary_state" => state,
+      "prompt_contract" => PromptRegistry::V1.stringify_keys.merge("version" => "chat:v1") }
+    call = stub_request(:post, ENV.fetch("ANCHOR_AI_URL")).with(
+      headers: { "X-Anchor-Secret" => ENV.fetch("ANCHOR_AI_SECRET"),
+        "Content-Type" => "application/json" }, body: expected
+    ).to_return(status: 200, body: JSON.generate(
+      reply: "Python reply", tokens: 12, context_state: state))
+    post "/chat", params: { message: "Where is my order?", history: history,
+      summary_state: state }, as: :json
+    assert_response :success
+    assert_equal({ "reply" => "Python reply", "context_state" => state }, JSON.parse(response.body))
     assert_requested call, times: 1
   end
 end

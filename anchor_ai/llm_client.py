@@ -24,6 +24,15 @@ except ImportError:
     from reasoning import request_fields
     from schemas import TRIAGE_FORMAT, InvalidModelOutput, validate_triage
 
+try:
+    from .context import assemble, PreparedPrompt, context_options, request_count
+    from .provider import ContextReplayProvider, stream_tokens as provider_stream
+    from .prompts import SUMMARY_VERSION
+except ImportError:
+    from context import assemble, PreparedPrompt, context_options, request_count
+    from provider import ContextReplayProvider, stream_tokens as provider_stream
+    from prompts import SUMMARY_VERSION
+
 MAX_ATTEMPTS = 3
 TOTAL_DEADLINE = 4.0
 BACKOFF_CAP = 1.0
@@ -80,6 +89,19 @@ class LlmClient:
 
     async def stream_tokens(self, prompt, *, contract=None):
         contract = selected_contract(prompt, contract)
+        if context_options(prompt) is not None:
+            prepared, assembly, provider = await self._prepare_context(prompt, contract)
+            self.context_state, self.context_metrics = assembly.state, assembly.metrics
+            with span('llm.call', stage='provider', **contract_fields(contract),
+                      **assembly.metrics):
+                source = provider_stream(provider, prepared)
+                try:
+                    async for delta in source:
+                        if delta.text:
+                            yield delta.text
+                finally:
+                    await source.aclose()
+            return
         if contract is not None:
             source = self._stream_contract(prompt, contract)
         else:
@@ -156,8 +178,7 @@ class LlmClient:
         original = self.provider
         try:
             if isinstance(original, ReplayProvider):
-                self.provider = ReplayProvider(task='triage', variant=variant,
-                                               fixture_id=fixture_id)
+                self.provider = ReplayProvider(task='triage', variant=variant, fixture_id=fixture_id)
             result = asyncio.run(self.complete_result(prompt))
             if result.finish_reason != 'stop':
                 raise ProviderError('invalid_triage_response', attempts=result.attempts)
@@ -181,6 +202,18 @@ class LlmClient:
     async def complete_result(self, prompt, system=None, max_tokens=256, *, effort=None,
                               response_format=None, contract=None):
         contract = selected_contract(prompt, contract)
+        if context_options(prompt) is not None:
+            if system is not None or effort is not None or response_format is not None:
+                raise ValueError('chat contract cannot be combined with other prompt policies')
+            prepared, assembly, provider = await self._prepare_context(prompt, contract)
+            child = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
+            self.context_state, self.context_metrics = assembly.state, assembly.metrics
+            try:
+                result = await child.complete_result(prepared, max_tokens=contract.max_tokens)
+                result.context_state = assembly.state
+                return result
+            finally:
+                self.attempts = child.attempts
         if contract is not None:
             if system is not None or effort is not None or response_format is not None:
                 raise ValueError('chat contract cannot be combined with other prompt policies')
@@ -195,21 +228,22 @@ class LlmClient:
             max_tokens = contract.max_tokens
         self.attempts = 0
         self.last_error = ProviderError('provider_timeout', retryable=True)
-        model = contract.model_id if contract else os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-        offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider))
-        with span('llm.call', stage='provider',
-                  request_model=model,
+        model = getattr(prompt, 'context_model',
+                        contract.model_id if contract else os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'))
+        offline = isinstance(self.provider, (ReplayProvider, PromptReplayProvider, ContextReplayProvider))
+        with span('llm.call', stage='provider', request_model=model,
                   response_model=None, currency='USD', price_version=PRICE_VERSION,
-                  cost_basis='offline_replay_estimate' if offline
-                  else 'published_price_estimate') as telemetry:
+                  cost_basis='offline_replay_estimate' if offline else 'published_price_estimate') as telemetry:
             self.telemetry = telemetry
             try:
                 if contract is not None:
                     telemetry.set(**contract_fields(contract))
                     fields = {'temperature': contract.temperature}
                 else:
-                    fields = request_fields(model, effort, max_tokens,
-                                            offline=isinstance(self.provider, ReplayProvider))
+                    fields = request_fields(model, effort, max_tokens, offline=offline)
+                if hasattr(prompt, 'context_messages'):
+                    telemetry.set(**getattr(prompt, 'context_metrics', {}))
+                    fields = dict(fields or {}, temperature=prompt.context_temperature)
                 if response_format is not None:
                     fields = dict(fields or {})
                     fields['response_format'] = response_format
@@ -219,10 +253,9 @@ class LlmClient:
                                   max_completion_tokens=max_tokens)
                 fixture_ms = getattr(self.provider, 'fixture_latency_ms', None)
                 if fixture_ms is not None:
-                    telemetry.set(fixture_latency_ms=fixture_ms,
-                                  fixture_latency_basis='authored_example')
-                if contract is not None:
-                    operation = self._run(prompt, system, max_tokens, fields, model=contract.model_id)
+                    telemetry.set(fixture_latency_ms=fixture_ms, fixture_latency_basis='authored_example')
+                if contract is not None or hasattr(prompt, 'context_messages'):
+                    operation = self._run(prompt, system, max_tokens, fields, model=model)
                 else:
                     operation = self._run(prompt, system, max_tokens, fields)
                 return await asyncio.wait_for(operation, timeout=TOTAL_DEADLINE)
@@ -243,6 +276,7 @@ class LlmClient:
         if system is not None:
             messages.append({'role': 'system', 'content': system})
         messages.append({'role': 'user', 'content': prompt})
+        messages = getattr(prompt, 'context_messages', messages)
         payload = {'model': model or os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
                    'messages': messages, 'max_tokens': max_tokens}
         if reasoning_fields:
@@ -260,9 +294,7 @@ class LlmClient:
                     response = await client.post(
                         'https://api.openai.com/v1/chat/completions',
                         headers={'Authorization': 'Bearer ' + key}, json=payload,
-                        timeout=httpx.Timeout(min(2.0, remaining),
-                                              connect=min(1.0, remaining)),
-                    )
+                        timeout=httpx.Timeout(min(2.0, remaining), connect=min(1.0, remaining)))
                     self.telemetry.set(provider_request_id=response.headers.get('x-request-id'),
                                        status_code=response.status_code)
                     if response.status_code == 200:
@@ -278,18 +310,15 @@ class LlmClient:
                             usage = Usage.model_validate(body['usage'])
                             if usage.total_tokens != usage.prompt_tokens + usage.completion_tokens:
                                 raise ValueError('inconsistent usage')
-                            result = InferResponse(
-                                reply=choice['message']['content'],
+                            result = InferResponse(reply=choice['message']['content'],
                                 tokens=usage.total_tokens, usage=usage,
-                                finish_reason=choice['finish_reason'], attempts=self.attempts,
-                            )
+                                finish_reason=choice['finish_reason'], attempts=self.attempts)
                             tokens = tokens_from_usage(usage)
                             response_model = body.get('model')
                             self.telemetry.set(response_model=response_model, tokens=tokens,
-                                               cost_estimate=estimate(response_model, tokens),
-                                               finish_reason=result.finish_reason,
-                                               completion_status='incomplete' if result.finish_reason == 'length'
-                                               else 'completed' if result.finish_reason == 'stop' else 'other')
+                                cost_estimate=estimate(response_model, tokens), finish_reason=result.finish_reason,
+                                completion_status='incomplete' if result.finish_reason == 'length'
+                                else 'completed' if result.finish_reason == 'stop' else 'other')
                             return result
                         except (ValueError, KeyError, IndexError, TypeError):
                             raise ProviderError('invalid_provider_response', attempts=self.attempts) from None
@@ -308,3 +337,29 @@ class LlmClient:
                     break
                 await self.sleep(delay)
         raise self._final_error()
+
+    async def _prepare_context(self, prompt, contract):
+        if contract is None:
+            raise ValueError('context requires a pinned chat contract')
+        provider = self.provider
+        if isinstance(provider, (ReplayProvider, PromptReplayProvider)):
+            provider = ContextReplayProvider()
+        history, state = context_options(prompt)
+        async def summarize(messages, limit):
+            with span('context.summary', stage='summary', summary_version=SUMMARY_VERSION,
+                      summary_input_tokens=request_count(messages), summary_output_cap=limit):
+                child = LlmClient(provider, sleep=self.sleep, clock=self.clock, jitter=self.jitter)
+                # A prepared prompt passes complete messages without chat rendering.
+                source = PreparedPrompt('', type('Source', (), {'messages': messages})(), contract)
+                source.context_max_tokens = limit
+                result = await child.complete_result(source, max_tokens=limit)
+                if result.finish_reason != 'stop':
+                    raise ProviderError('invalid_provider_response')
+                return result.reply
+        with span('context.assemble', stage='context', **contract_fields(contract)) as telemetry:
+            assembly = await assemble(contract, str(prompt), history, state, summarize)
+            telemetry.set(**assembly.metrics)
+        prepared = PreparedPrompt(str(prompt), assembly, contract)
+        # Attach numeric metrics to this request, never to a shared provider.
+        prepared.context_metrics = assembly.metrics
+        return prepared, assembly, provider

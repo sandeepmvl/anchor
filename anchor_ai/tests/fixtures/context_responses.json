@@ -1,0 +1,7 @@
+{
+  "commitment": "Mira committed to sending the receipt Friday.",
+  "summary_with_commitment": "Mira committed to sending the receipt Friday. Receipt review remains open.",
+  "summary_without_commitment": "The customer is reviewing purchase records. Keep the receipt ticket open.",
+  "reply_with_commitment": "You committed to sending the receipt Friday.",
+  "reply_without_commitment": "I can help review your receipt ticket."
+}

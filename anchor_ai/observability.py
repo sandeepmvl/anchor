@@ -21,7 +21,6 @@ SINK = lambda record: LOGGER.info(json.dumps(record, separators=(',', ':')))
 PRICE_VERSION = 'gpt-4o-mini-standard-2024-07'
 PRICES = {'gpt-4o-mini': {'input': '0.15', 'cached_input': '0.075',
                          'cache_write_input': '0', 'output': '0.60'},
-          # Illustrative fixture rates only. This is not a live model price.
           'anchor-reasoning-replay': {'input': '1.25', 'cached_input': '0',
                                      'cache_write_input': '0', 'output': '10'}}
 FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model',
@@ -30,7 +29,12 @@ FIELDS = {'tenant_id', 'conversation_id', 'stage', 'status_code', 'request_model
           'reasoning_setting', 'reasoning_effort', 'max_completion_tokens',
           'finish_reason', 'completion_status', 'fixture_latency_ms',
           'fixture_latency_basis', 'ticket_id', 'ticket_class',
-          'prompt_version', 'prompt_fingerprint', 'temperature', 'max_tokens'}
+          'prompt_version', 'prompt_fingerprint', 'temperature', 'max_tokens',
+          'counter', 'context_margin', 'section_tokens', 'section_caps',
+          'section_allocations', 'section_priorities', 'estimated_input_tokens',
+          'output_reserve', 'context_window', 'pre_history_tokens', 'summary_calls',
+          'summary_input_tokens', 'summary_output_cap', 'summary_version',
+          'folded_position', 'pending_messages', 'context_fallback'}
 ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'internal_error', 'provider_bad_request', 'provider_auth_failed',
           'provider_forbidden', 'provider_not_found', 'provider_quota_exhausted',
@@ -38,7 +42,8 @@ ERRORS = {'validation_failed', 'service_auth_failed', 'service_not_configured',
           'provider_transport_error', 'provider_timeout', 'invalid_provider_response',
           'missing_provider_key', 'invalid_provider_mode', 'provider_rejected',
           'invalid_reasoning_effort', 'invalid_reasoning_limit',
-          'unsupported_reasoning_model', 'replay_miss', 'client_disconnect'}
+          'unsupported_reasoning_model', 'replay_miss', 'client_disconnect',
+          'context_budget_exceeded'}
 
 
 def now():

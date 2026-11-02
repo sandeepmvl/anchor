@@ -26,9 +26,16 @@ class ChatController < ApplicationController
       Rails.logger.info(event: 'prompt_resolved', request_id: context.fetch(:request_id),
         prompt_version: contract.fetch('version'))
       message = PromptRegistry::Message.new(message, contract)
+      if params.key?(:history) || params.key?(:summary_state)
+        options = params.permit(history: [:position, :role, :content],
+          summary_state: [:summary, :prompt_version, :folded_position]).to_h
+        message = LlmClient::ContextMessage.new(message, contract, options)
+      end
       unless stream_request?
         reply = LlmClient.new.complete(message)
-        render json: { reply: reply }
+        body = { reply: reply }
+        body[:context_state] = reply.context_state if reply.respond_to?(:context_state)
+        render json: body
         return
       end
       response.headers['Content-Type'] = 'text/event-stream; charset=utf-8'
