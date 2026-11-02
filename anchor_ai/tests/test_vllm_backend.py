@@ -117,6 +117,25 @@ def test_router_keeps_tenant_approval():
     assert router.adapters['local'].server.calls == 0
 
 
+@pytest.mark.parametrize('mutation', ['sequence', 'tokens', 'profile', 'release'])
+def test_deployment_rejects_batching_drift(tmp_path, mutation):
+    from pathlib import Path
+    import yaml
+    spec = yaml.safe_load(Path('ops/deploy/vllm_service.yml').read_text())
+    if mutation in {'sequence', 'tokens'}:
+        flag = '--max-num-seqs' if mutation == 'sequence' else '--max-num-batched-tokens'
+        index = spec['command'].index(flag) + 1
+        spec['command'][index] = str(int(spec['command'][index]) + 1)
+    elif mutation == 'profile':
+        spec['batching_profile'] = 'unapproved'
+    else:
+        spec['release']['real_evidence_required'] = False
+    path = tmp_path / 'deployment.yml'
+    path.write_text(yaml.safe_dump(spec))
+    with pytest.raises(ValueError, match='invalid_vllm_deployment'):
+        validate_deployment(path)
+
+
 def test_deployment_and_release_refusal():
     assert validate_deployment()['artifact']['format'] == 'awq'
     with pytest.raises(ValueError, match='release_evidence_missing'):

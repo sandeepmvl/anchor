@@ -161,10 +161,22 @@ def validate_deployment(path='ops/deploy/vllm_service.yml'):
     import yaml
     spec = yaml.safe_load(Path(path).read_text())
     command = spec['command']
+    # Validate the versioned batching contract while retaining exact validation
+    # of the artifact, destination, runtime and all other launch arguments.
+    from anchor_ai.serving_benchmark import surge_profile
+    try:
+        _, profile, _, _ = surge_profile(spec.get('batching_profile'))
+        if spec.get('batching_profile') not in {'default', 'tuned'}:
+            raise ValueError('invalid_batching_profile')
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('invalid_vllm_deployment') from None
     expected = ['vllm', 'serve', '/srv/anchor/models/approved',
                 '--quantization', 'awq', '--served-model-name', MODEL,
                 '--host', '127.0.0.1', '--port', '8765',
-                '--max-model-len', '512', '--max-num-seqs', '8']
+                '--max-model-len', '512',
+                '--max-num-seqs', str(profile['max_num_seqs']),
+                '--max-num-batched-tokens', str(profile['max_num_batched_tokens']),
+                '--enable-chunked-prefill', '--scheduling-policy', 'fcfs']
     if command != expected or spec['runtime'] != 'vllm==0.8.5':
         raise ValueError('invalid_vllm_deployment')
     if (spec['artifact']['format'] != 'awq'

@@ -21,7 +21,15 @@ command:
   - --max-model-len
   - '512'
   - --max-num-seqs
-  - '8'
+  - '4'
+  - --max-num-batched-tokens
+  - '128'
+  - --enable-chunked-prefill
+  - --scheduling-policy
+  - fcfs
+# The command above is the committed default profile.
+# The benchmark renders and validates candidate arguments without deploying them.
+batching_profile: default
 readiness:
   path: /v1/models
   expected_model: tiny-llama

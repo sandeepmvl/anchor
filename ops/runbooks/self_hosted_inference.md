@@ -8,6 +8,30 @@ MockTransport is an in-process protocol server, not vLLM or a quality judge.
 The NumPy rounding experiment is not an implementation of AWQ calibration.
 No weights, GPU, network, container or hosted provider is exercised.
 
+## Surge batching profiles
+
+The versioned batching_profiles in config/self_hosted.yml are separate from
+the inherited single-request benchmark. The deployment specification commits
+the default profile. ops/load/load_test.py validates that command and renders
+candidate arguments for the selected profile without editing or deploying it.
+The tuned candidate uses 16 sequences and 512 scheduled tokens per iteration.
+A reviewed production change must update the selected profile, deployment
+profile name, and matching command arguments together; drift fails validation.
+
+Run the same concurrency and scheduling mode for both profiles. Record completed
+requests, rejected admissions, timeouts, queue wait, completion p99, short-ticket
+first-token p99, and each tenant's counters. A failed request is never successful
+throughput. The in-process OpenAI-compatible server supplies synthetic lengths;
+the scheduler uses virtual time and an explicit assumed iteration cost.
+Full-context KV estimates exclude runtime overhead and do not prove device fit.
+Tenant token reservations model conservative cost quotas, not actual billing.
+Keep Rails tenant authorization, rate limits, and physical-attempt quotas enabled.
+
+Offline reports cannot promote a profile. require_surge_promotion refuses even
+claimed live evidence until a separate reviewed real-evidence validator exists.
+The offline tests prove that refusal. No weights, quantization quality, GPU
+memory use, live cancellation behavior, or real throughput is verified here.
+
 ## Configuration
 
 Give Rails and Python LLM_BACKEND=self_hosted and
@@ -37,6 +61,15 @@ Submit the same authenticated tenant ticket through Anchor, with quota
 admission enabled. Capture redacted retrieval, tool and LLM spans, actual usage,
 answer grounding and warm/cold latency for both authorized destinations.
 Record failures too. Equal numeric token caps do not imply equal model work.
+For batching comparisons, launch each validated profile on the same GPU and
+approved artifact. Use the same redacted ticket distribution, concurrency,
+warmup, deadlines, tenant admission, and measurement duration. Capture actual
+input/output tokens, completed throughput, timeouts, queue wait, first-token
+latency, completion p99, and tenant-level outcomes. Compare one setting at a
+time after the initial two-profile experiment. Attach the immutable profile,
+artifact digest, runtime version, GPU identity, and raw measurements to review.
+The offline surge runner is not a live load generator; use the established live
+adapter and an approved authenticated load client for these measurements.
 
 ## Release gate
 
