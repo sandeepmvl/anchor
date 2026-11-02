@@ -1,0 +1,39 @@
+{
+  "provenance": "authored synthetic scores; not live framework measurements",
+  "configuration": {
+    "fixture_version": "anchor-triad-v1",
+    "framework_versions": "not executed",
+    "judge": "recorded synthetic profiles",
+    "aggregation": "arithmetic mean across queries; dimensions stay separate"
+  },
+  "snapshots": {
+    "good": {"tenant_id":"demo-org","generation_id":"fixture-v1","user_input":"What is the refund deadline?","retrieved_contexts":["Refunds may be requested within 30 days of purchase."],"response":"You may request a refund within 30 days of purchase. [KB-REFUND-1]"},
+    "bad": {"tenant_id":"demo-org","generation_id":"fixture-v1","user_input":"What is the refund deadline?","retrieved_contexts":["Reset your password from account settings."],"response":"You may request a refund within 30 days of purchase. [KB-REFUND-1]"}
+  },
+  "profiles": {
+    "good": {"ragas":{"faithfulness":0.95,"answer_relevancy":0.9,"ContextRelevance":0.9},"trulens":{"groundedness":0.94,"answer_relevance":0.92,"context_relevance":0.91}},
+    "bad": {"ragas":{"faithfulness":0.1,"answer_relevancy":0.9,"ContextRelevance":0.15},"trulens":{"groundedness":0.12,"answer_relevance":0.92,"context_relevance":0.18}}
+  },
+  "cases": {
+    "refund-01": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-02": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-03": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-04": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-05": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-06": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-07": {"snapshot":"bad","category":"refund-standard","profile":"bad"},
+    "refund-08": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-09": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-10": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-11": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-12": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-13": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-14": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-15": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-16": {"snapshot":"good","category":"refund-standard","profile":"good"},
+    "refund-17": {"snapshot":"good","category":"refund-exception","profile":"good"},
+    "refund-18": {"snapshot":"bad","category":"refund-exception","profile":"bad"},
+    "refund-19": {"snapshot":"good","category":"refund-exception","profile":"good"},
+    "refund-20": {"snapshot":"good","category":"refund-exception","profile":"good"}
+  }
+}

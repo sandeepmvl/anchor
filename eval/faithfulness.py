@@ -147,3 +147,12 @@ def score_payload(payload, judge):
 
 def persist_report(path, report):
     Path(path).write_text(json.dumps(redact_evaluation(report), indent=2) + '\n')
+
+
+def groundedness_dimension(report):
+    """Expose custom support scores without inventing the other triad dimensions."""
+    from eval.triad import validate_score
+
+    if report.get('status') != 'scored' or report.get('score') is None:
+        return {'groundedness': None}
+    return {'groundedness': validate_score(report['score'])}
