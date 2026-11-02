@@ -101,7 +101,29 @@ def main():
     parser = argparse.ArgumentParser(description='Replay recorded evidence, not a deployment gate pass.')
     parser.add_argument('--offline', action='store_true', required=True)
     parser.add_argument('--candidate', required=True)
+    parser.add_argument('--artifact')
+    parser.add_argument('--baseline-artifact')
+    parser.add_argument('--artifact-report')
+    parser.add_argument('--runtime', default='vllm_gpu')
+    parser.add_argument('--expect-rejected', action='store_true')
     args = parser.parse_args()
+    if args.artifact:
+        from anchor_ai.serving_artifacts import selection
+        try:
+            report = json.loads(Path(args.artifact_report).read_text()) if args.artifact_report else None
+            decision = selection(args.artifact, args.runtime, report, args.baseline_artifact)
+        except (OSError, ValueError, KeyError, TypeError):
+            decision = {'selectable': False, 'deployment_approved': False,
+                        'blockers': ['missing_or_invalid_artifact_evidence']}
+        print(json.dumps({'decision': decision}, indent=2, sort_keys=True))
+        if args.expect_rejected:
+            if decision['selectable']:
+                raise SystemExit('expected rejection')
+        elif not decision['selectable']:
+            raise SystemExit(1)
+        return
+    if args.expect_rejected or args.artifact_report or args.baseline_artifact:
+        parser.error('artifact options require --artifact')
     print(json.dumps(replay(args.candidate), indent=2, sort_keys=True))
 
 

@@ -143,6 +143,13 @@ async def measure(events):
                 output_events_s=count / max(end - first, 1e-9), queue_ms=queue_ms)
 
 
+def compare_artifacts(baseline, candidate, runtime):
+    from anchor_ai.serving_artifacts import compare, selection
+    report = compare(baseline, candidate, runtime)
+    report['decision'] = selection(candidate, runtime, report, baseline)
+    return report
+
+
 def percentile(values, fraction):
     return sorted(values)[math.ceil(len(values) * fraction) - 1] if values else None
 

@@ -16,3 +16,20 @@ assumptions:
   bytes_per_kv_element: 2
   context_tokens: 512
   memory_budget_bytes: 4000000000
+artifacts:
+  max_quality_loss: 0.0
+  min_pass_rate: 1.0
+  compatible_runtimes:
+    fp16: [vllm_gpu, llama_cpp_cpu]
+    gptq: [vllm_gpu]
+    awq: [vllm_gpu]
+    gguf: [llama_cpp_cpu]
+  vllm_launch:
+    executable: vllm
+    subcommand: serve
+    model_path: /srv/anchor/models/approved
+    served_model_name: tiny-llama
+    host: 127.0.0.1
+    port: 8765
+    supported_formats: [fp16, gptq, awq]
+    approval_required: true
