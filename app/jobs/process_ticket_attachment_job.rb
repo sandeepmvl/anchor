@@ -16,7 +16,9 @@ class ProcessTicketAttachmentJob < ApplicationJob
         answer = AgentOrchestrationClient.new.answer_attachments(evidence,
           tenant_id: organization_id, conversation_id: conversation.id)
         raise MultimodalClient::Unavailable unless answer['tool_calls'] == []
-        item.update!(status: 'answered', answer: answer)
+        # Answer completion must not erase partial-transcription retry guidance.
+        extraction_notice = item.notice
+        item.update!(status: 'answered', answer: answer, notice: extraction_notice)
         conversation.update!(attachment_answer: answer)
       rescue StandardError
         item.update!(status: 'error', evidence: [], answer: {},

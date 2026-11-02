@@ -1,0 +1,10 @@
+{
+  "duration": 720,
+  "rate": 16000,
+  "turns": [
+    {"start": 20, "end": 24, "speaker": "SPEAKER_00", "text": "hello how can i help you today"},
+    {"start": 235, "end": 239, "speaker": "SPEAKER_01", "text": "please refund my premium plan payment person@example.com"},
+    {"start": 465, "end": 469, "speaker": "SPEAKER_00", "text": "your premium plan refund is approved"},
+    {"start": 700, "end": 704, "speaker": "SPEAKER_01", "text": "thank you for helping with my refund"}
+  ]
+}

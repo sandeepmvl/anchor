@@ -7,11 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from anchor_ai.multimodal_context import verify_context, VisionIdentity
-from anchor_ai.pii import redact_memory
+from anchor_ai.pii import redact_memory, redact_evidence_span
 
 MIN_CONFIDENCE = 0.5
 MAX_BYTES = 2_000_000
-ADAPTERS = {'screenshot': 'vision', 'scanned_page': 'ocr'}
+ADAPTERS = {'screenshot': 'vision', 'scanned_page': 'ocr', 'voice': 'audio'}
 
 
 class Evidence(BaseModel):
@@ -54,6 +54,15 @@ def extract(raw, *, kind, identity, expected_tenant, expected_conversation,
             or identity.conversation_id != expected_conversation):
         raise ValueError('attachment_scope_rejected')
     source = ADAPTERS[kind]
+    if kind == 'voice':
+        try:
+            from anchor_ai.audio import extract_voice
+            result = extract_voice(raw, identity, adapter=adapter, production=production)
+            result['evidence'] = [Evidence.model_validate(row).model_dump()
+                                  for row in result['evidence']]
+            return result
+        except Exception:
+            return error_result(source)
     if not isinstance(raw, bytes) or not 0 < len(raw) <= MAX_BYTES:
         return error_result(source)
     if adapter is None:
@@ -118,7 +127,7 @@ def attachment_answer(rows, *, tenant_id, conversation_id):
             raise ValueError('attachment_identity_missing')
         if item.kind == 'document' and (item.chunk_id is None or item.attachment_id is not None):
             raise ValueError('document_identity_missing')
-        if redact_memory(item.span) != item.span:
+        if redact_evidence_span(item.span, item.region) != item.span:
             raise ValueError('unsanitized_evidence')
         citations.append(item.model_dump())
     return {'answer': '\n'.join(item.span for item in items),
@@ -128,16 +137,24 @@ def attachment_answer(rows, *, tenant_id, conversation_id):
 def main():
     # Input/output caps supplement the parent's wall-clock deadline.
     try:
-        payload = json.loads(sys.stdin.buffer.read(2_900_001))
+        payload = json.loads(sys.stdin.buffer.read(33_000_001))
         secret = os.environ.get('ANCHOR_ATTACHMENT_PROCESS_SECRET', '')
         identity = verify_context(payload['context'], secret)
         if payload['operation'] == 'extract':
+            if payload['kind'] != 'voice' and len(payload['bytes']) > 2_800_000:
+                raise ValueError('image_input_limit')
             raw = base64.b64decode(payload['bytes'], validate=True)
+            adapter = None
+            production = os.environ.get('ANCHOR_ATTACHMENT_PRODUCTION') == '1'
+            if payload['kind'] == 'voice' and not production:
+                from anchor_ai.audio import AudioClient
+                failed = os.environ.get('ANCHOR_AUDIO_FAIL_CHUNK')
+                adapter = AudioClient(fail_chunks=() if failed is None else {int(failed)})
             result = extract(raw, kind=payload['kind'], identity=identity,
                              expected_tenant=payload['tenant_id'],
                              expected_conversation=payload['conversation_id'],
-                             production=os.environ.get('ANCHOR_ATTACHMENT_PRODUCTION') == '1')
-            result['offline_fixture'] = os.environ.get('ANCHOR_ATTACHMENT_PRODUCTION') != '1'
+                             adapter=adapter, production=production)
+            result['offline_fixture'] = not production
         elif payload['operation'] == 'answer':
             if (identity.tenant_id != payload['tenant_id']
                     or identity.conversation_id != payload['conversation_id']):

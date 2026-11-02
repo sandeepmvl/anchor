@@ -12,6 +12,29 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+
+def child():
+    import runpy
+    fixture, mode, raw = sys.argv[2:]
+    limits = json.loads(raw)
+    for constant, value in ((resource.RLIMIT_CPU, limits['cpu_seconds']),
+                            (resource.RLIMIT_AS, limits['address_space_bytes']),
+                            (resource.RLIMIT_FSIZE, limits['file_bytes']),
+                            (resource.RLIMIT_NOFILE, limits['open_files'])):
+        resource.setrlimit(constant, (value, value))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    sys.argv = [fixture, mode]
+    runpy.run_path(fixture, run_name='__main__')
+
+
+# The isolated child needs only the standard library. Apply its limits and run
+# the approved fixture before importing parent-side configuration and schemas.
+# Keep the parent's wall deadline unchanged; do not add a startup grace period.
+if __name__ == '__main__' and '--child' in sys.argv:
+    child()
+    raise SystemExit(0)
+
+
 import yaml
 from pydantic import BaseModel, ConfigDict
 
@@ -200,24 +223,7 @@ class SandboxService:
                                      backend='rehearsal' if self.rehearsal else 'production').model_dump()
 
 
-def child():
-    import runpy
-    fixture, mode, raw = sys.argv[2:]
-    limits = json.loads(raw)
-    for constant, value in ((resource.RLIMIT_CPU, limits['cpu_seconds']),
-                            (resource.RLIMIT_AS, limits['address_space_bytes']),
-                            (resource.RLIMIT_FSIZE, limits['file_bytes']),
-                            (resource.RLIMIT_NOFILE, limits['open_files'])):
-        resource.setrlimit(constant, (value, value))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    sys.argv = [fixture, mode]
-    runpy.run_path(fixture, run_name='__main__')
-
-
 if __name__ == '__main__':
-    if '--child' in sys.argv:
-        child()
-    else:
-        service = SandboxService(rehearsal=True)
-        print(json.dumps(service.readiness()))
-        print(json.dumps(service.execute_fixture(1, 'diagnostic')))
+    service = SandboxService(rehearsal=True)
+    print(json.dumps(service.readiness()))
+    print(json.dumps(service.execute_fixture(1, 'diagnostic')))

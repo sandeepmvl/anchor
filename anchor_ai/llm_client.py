@@ -1,3 +1,9 @@
+def transcribe_audio(raw, *, client=None, production=False, policy='silence'):
+    """Speech uses an explicit adapter, never the chat provider's live setting."""
+    from anchor_ai.audio import transcribe
+    return transcribe(raw, client=client, production=production, policy=policy)
+
+
 def extract_document(raw, *, engine='tesseract', limits=None, vision=None):
     """OCR is separate from chat generation and never inherits its live provider."""
     from anchor_ai.ocr import extract_pdf

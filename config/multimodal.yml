@@ -2,6 +2,9 @@
 # PDF extraction uses anchor_ai.ocr.Limits and explicit engine selection.
 # Keep this schema unchanged: the existing vision service validates its keys.
 # Ticket attachments use attachment_evidence.MIN_CONFIDENCE and MAX_BYTES.
+# Voice is separate: audio.MAX_UPLOAD=24000000, CHUNK_SECONDS=240,
+# CHUNK_BYTES=8000000; MultimodalClient::AUDIO_MAX_BYTES bounds Rails ingress.
+# Production voice extraction refuses the offline fixture recognizer.
 provider: offline
 external_calls: false
 model: gpt-4o-mini

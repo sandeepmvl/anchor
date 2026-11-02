@@ -327,3 +327,19 @@ class IssueSummary(BaseModel):
     visible_error_code: Literal['E42'] | None
     confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
     evidence_regions: list[EvidenceRegion] = Field(min_length=1, max_length=4)
+
+
+class AudioSegment(BaseModel):
+    """Absolute recording seconds; anonymous speakers do not imply business roles."""
+    model_config = ConfigDict(strict=True, extra='forbid')
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=4000)
+    speaker: str = Field(min_length=1, max_length=100)
+    role: Literal['agent', 'customer', 'unknown'] = 'unknown'
+
+    @model_validator(mode='after')
+    def positive_interval(self):
+        if self.end <= self.start:
+            raise ValueError('audio_interval_rejected')
+        return self

@@ -4,7 +4,7 @@
   <p>Only sanitized evidence is retained. Re-upload is required after extraction failure.</p>
   <%= form_with url: ticket_attachments_path(ticket_id: @ticket.id), multipart: true do |form| %>
     <%= form.label :kind, 'Attachment kind' %>
-    <%= form.select :kind, [['Screenshot', 'screenshot'], ['Scanned page', 'scanned_page']] %>
+    <%= form.select :kind, [['Screenshot', 'screenshot'], ['Scanned page', 'scanned_page'], ['Recorded voice call', 'voice']] %>
     <%= form.file_field :file, required: true %>
     <%= form.submit 'Upload and process' %>
   <% end %>
@@ -12,7 +12,7 @@
   <% @attachments.each do |item| %>
     <section aria-label="Attachment <%= item.id %>">
       <h2>Attachment <%= item.id %>: <%= item.status %></h2>
-      <% if item.offline_fixture %><p>Offline fixture; real vision/OCR quality not verified.</p><% end %>
+      <% if item.offline_fixture %><p>Offline fixture; real vision/OCR/speech quality not verified.</p><% end %>
       <p role="status"><%= item.notice %></p>
       <p><%= item.answer['answer'] %></p>
       <ul>

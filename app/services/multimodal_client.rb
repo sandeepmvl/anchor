@@ -8,9 +8,15 @@ require 'timeout'
 class MultimodalClient
   class Unavailable < StandardError; end
   MAX_BYTES = 2_000_000
+  AUDIO_MAX_BYTES = 24_000_000
+
+  def self.limit_for(kind)
+    kind == 'voice' ? AUDIO_MAX_BYTES : MAX_BYTES
+  end
 
   def extract(raw, kind:, tenant_id:, conversation_id:)
-    raise Unavailable unless raw.bytesize.between?(1, MAX_BYTES)
+    raise Unavailable unless %w[screenshot scanned_page voice].include?(kind)
+    raise Unavailable unless raw.bytesize.between?(1, self.class.limit_for(kind))
     invoke({ operation: 'extract', bytes: Base64.strict_encode64(raw), kind: kind },
       tenant_id: tenant_id, conversation_id: conversation_id)
   end

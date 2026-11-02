@@ -125,10 +125,39 @@ def redact_graph(value):
 
 
 def redact_attachment_span(text):
-    """Bounded sanitized span for attachment evidence persistence."""
+    """Bounded image or voice text, sanitized before evidence persistence or export."""
     if not isinstance(text, str) or len(text) > 4000:
         raise ValueError('attachment_span_rejected')
     safe = redact_memory(text)
+    if len(safe) > 4000:
+        raise ValueError('attachment_span_rejected')
+    return safe
+
+
+AUDIO_EVIDENCE_PREFIX = re.compile(
+    r'^\[(?:(?P<start>\d{1,3}\.\d{3})-(?P<end>\d{1,3}\.\d{3})s; '
+    r'role=unknown|MISSING (?P<missing_start>\d{1,3}\.\d{3})-'
+    r'(?P<missing_end>\d{1,3}\.\d{3})s)\] ')
+
+
+def redact_evidence_span(text, region):
+    """Keep validated audio coordinates separate from untrusted transcript text."""
+    if not isinstance(region, str) or not re.fullmatch(r'audio_(?:gap_)?\d+', region):
+        return redact_attachment_span(text)
+    if not isinstance(text, str) or len(text) > 4000:
+        raise ValueError('attachment_span_rejected')
+    match = AUDIO_EVIDENCE_PREFIX.match(text)
+    if match is None:
+        raise ValueError('audio_evidence_prefix_rejected')
+    missing = match['missing_start'] is not None
+    if missing != region.startswith('audio_gap_'):
+        raise ValueError('audio_evidence_prefix_rejected')
+    start = float(match['missing_start'] if missing else match['start'])
+    end = float(match['missing_end'] if missing else match['end'])
+    if not 0 <= start < end <= 720:
+        raise ValueError('audio_evidence_interval_rejected')
+    # No free-form metadata is exempted from detection: only the parsed prefix.
+    safe = match[0] + redact_attachment_span(text[match.end():])
     if len(safe) > 4000:
         raise ValueError('attachment_span_rejected')
     return safe

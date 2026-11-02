@@ -13,6 +13,9 @@ FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
 
 # Rails app lives here
 WORKDIR /rails
+# Audio preprocessing uses stdlib wave and the existing Python NumPy environment.
+# No speech weights are downloaded here. A built Rails image does not establish
+# live speech-adapter readiness; production extraction remains fail-closed.
 
 # Install base packages
 RUN apt-get update -qq && \

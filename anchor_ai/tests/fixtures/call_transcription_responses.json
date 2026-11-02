@@ -1,0 +1,10 @@
+{
+  "basis": "Authored responses for generated tones, not recorded ASR predictions",
+  "segments": [
+    {"start": 20, "end": 24, "text": "hello how can i help you today"},
+    {"start": 100, "end": 102, "text": "thank you"},
+    {"start": 235, "end": 239, "text": "please refund my premium plan payment person@example.com"},
+    {"start": 465, "end": 469, "text": "your premium plan refund is improved"},
+    {"start": 700, "end": 704, "text": "thank you for helping with my refund"}
+  ]
+}

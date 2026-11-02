@@ -1,3 +1,9 @@
+def transcribe_recorded_call(raw, *, client=None, production=False, policy='silence'):
+    """Internal worker seam; ticket callers must use the signed attachment boundary."""
+    from anchor_ai.llm_client import transcribe_audio
+    return transcribe_audio(raw, client=client, production=production, policy=policy)
+
+
 def extract_document(raw, *, engine='tesseract', limits=None, vision=None):
     """Internal worker entry point; authorization belongs to the ingestion caller."""
     from anchor_ai.llm_client import extract_document as extract

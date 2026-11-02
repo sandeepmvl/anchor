@@ -13,14 +13,15 @@ class Api::TicketAttachmentsController < ApplicationController
 
   def create
     kind = params[:kind].to_s
-    return head :unprocessable_entity unless %w[screenshot scanned_page].include?(kind)
+    return head :unprocessable_entity unless %w[screenshot scanned_page voice].include?(kind)
     upload = params[:file]
     return head :unprocessable_entity unless upload.respond_to?(:read)
-    raw = upload.read(MultimodalClient::MAX_BYTES + 1)
-    return head :payload_too_large if raw.bytesize > MultimodalClient::MAX_BYTES
+    limit = MultimodalClient.limit_for(kind)
+    raw = upload.read(limit + 1)
+    return head :payload_too_large if raw.bytesize > limit
     conversation = @ticket.conversation || @ticket.create_conversation!(organization: @ticket.organization)
-    event = { adapter: kind == 'screenshot' ? 'vision' : 'ocr', confidence: nil,
-      gate_fired: true, tool_requested: false, tenant_id: @ticket.organization_id,
+    event = { adapter: { 'screenshot' => 'vision', 'scanned_page' => 'ocr', 'voice' => 'audio' }.fetch(kind),
+      confidence: nil, gate_fired: true, tool_requested: false, tenant_id: @ticket.organization_id,
       conversation_id: conversation.id, request_id: request.request_id }
     item = nil
     ActiveSupport::Notifications.instrument('anchor.attachment.process', event) do
@@ -35,7 +36,7 @@ class Api::TicketAttachmentsController < ApplicationController
       status = result.fetch('status')
       raise MultimodalClient::Unavailable unless %w[readable unreadable error].include?(status)
       event[:confidence] = result['confidence']
-      event[:gate_fired] = status != 'readable'
+      event[:gate_fired] = result['gate_fired'] == true || status != 'readable'
       TicketAttachment.transaction do
         item = @ticket.ticket_attachments.create!(organization: @ticket.organization,
           kind: kind, status: status == 'readable' ? 'queued' : status,
