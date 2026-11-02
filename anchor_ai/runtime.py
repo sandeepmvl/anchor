@@ -26,7 +26,7 @@ from pathlib import Path
 import yaml
 
 from anchor_ai.contracts import AgentRequest, VerifiedExecution
-from anchor_ai.observability import span, trajectory_decision
+from anchor_ai.observability import span, trajectory_decision, model_call
 from anchor_ai.orchestration import select_flow, worker_for, propose
 
 ACTIONS = ['retrieve', 'lookup_order', 'check_refund', 'issue_refund']
@@ -228,7 +228,7 @@ class BoundedRuntime:
                                    action=s['plan'][s['phase']])
                     with span('python.bounded_agent.model', stage='llm'):
                         action, used = await asyncio.wait_for(
-                            propose(self.model, s, reserve),
+                            model_call(propose, self.model, s, reserve),
                             timeout=self.policy['bounded']['call_timeout_seconds'])
                     if type(used) is not int or not 0 <= used <= reserve:
                         raise ValueError('invalid_usage')
@@ -271,7 +271,9 @@ class BoundedRuntime:
                 s['pending']['reserved'] = True
                 self.save(s)  # Retrying a pending dispatch does not reserve twice.
             try:
-                with span('python.bounded_agent.tool', stage='tool', tool_name=action):
+                with span('python.bounded_agent.tool',
+                          stage='retrieval' if action == 'retrieve' else 'tool',
+                          tool_name=action):
                     if action == 'retrieve':
                         observation = await asyncio.wait_for(
                             self.retrieve(scope, s['message']),

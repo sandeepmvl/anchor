@@ -4,6 +4,7 @@ class ChatController < ApplicationController
   # Only the original non-streaming JSON endpoint is exempt from CSRF.
   skip_forgery_protection if: -> { action_name == 'create' && !stream_request? }
   class_attribute :answer_generator, default: nil
+  around_action :profile_anchor_action
 
   class ProtocolError < StandardError; end
 
@@ -25,7 +26,7 @@ class ChatController < ApplicationController
   end
 
   def create
-    context = AiTelemetry.context(request_id: request.request_id,
+    context = AiTelemetry.current&.child_context || AiTelemetry.context(request_id: request.request_id,
       traceparent: request.headers['traceparent'])
     response.set_header('X-Request-Id', context.fetch(:request_id))
     AiTelemetry.span('http.chat', context: context, stage: 'chat') do
@@ -37,8 +38,10 @@ class ChatController < ApplicationController
           return
         end
         trusted, settings = retrieval
-        result = LlmClient.new.complete_retrieval(message, context: trusted,
-          url: settings.fetch('url'), secret: ENV['ANCHOR_AI_SECRET'])
+        result = AiTelemetry.measure('retrieval') do
+          LlmClient.new.complete_retrieval(message, context: trusted,
+            url: settings.fetch('url'), secret: ENV['ANCHOR_AI_SECRET'])
+        end
         render json: result
         return
       end
@@ -54,7 +57,7 @@ class ChatController < ApplicationController
         message = LlmClient::ContextMessage.new(message, contract, options)
       end
       unless stream_request?
-        reply = LlmClient.new.complete(message)
+        reply = AiTelemetry.measure('model') { LlmClient.new.complete(message) }
         body = { reply: reply }
         body[:context_state] = reply.context_state if reply.respond_to?(:context_state)
         render json: body
@@ -109,6 +112,12 @@ class ChatController < ApplicationController
   end
 
   private
+
+  def profile_anchor_action
+    context = AiTelemetry.context(request_id: request.request_id,
+      traceparent: request.headers['traceparent'])
+    AiTelemetry.span('rails.action', context: context, stage: 'application') { yield }
+  end
 
   def retrieval_settings
     settings = YAML.safe_load(Rails.root.join('config/retrieval.yml').read).fetch('chat')

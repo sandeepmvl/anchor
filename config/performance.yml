@@ -1,0 +1,7 @@
+profiling:
+  enabled: true
+  samples: 20
+  scope: in_process_offline
+  percentile: nearest_rank
+  remainder_limit: 0.10
+  record_content: false

@@ -13,6 +13,7 @@ class RetrievalClient
       unless [tenant_id, conversation_id].all? { |id| id.is_a?(Integer) && id.positive? }
         raise Error, 'trusted_context_required'
       end
+      @context = nil
       @tenant_id, @conversation_id = tenant_id, conversation_id
       freeze
     end
@@ -36,7 +37,7 @@ class RetrievalClient
     payload = { message: message.to_s, tenant_id: @context.tenant_id,
                 conversation_id: @context.conversation_id }
     headers = { 'X-Request-Id' => request_id, 'traceparent' => traceparent }
-    result = @transport ? @transport.call(payload, headers) : perform(payload, headers)
+    result = timed_transport(payload, headers)
     valid = result.is_a?(Hash) && result['reply'].is_a?(String) &&
       result['citations'].is_a?(Array) &&
       result['citations'].all? { |id| id.is_a?(Integer) && id.positive? } &&
@@ -58,8 +59,7 @@ class RetrievalClient
     payload = { query: query.to_s, tenant_id: @context.tenant_id,
                 conversation_id: @context.conversation_id, top_k: top_k }
     headers = { 'X-Request-Id' => request_id, 'traceparent' => traceparent }
-    result = @transport ? @transport.call(payload, headers) :
-      perform(payload, headers, path: '/v1/retrieve/hybrid')
+    result = timed_transport(payload, headers, path: '/v1/retrieve/hybrid')
     valid = result.is_a?(Hash) && result['tenant_id'] == @context.tenant_id &&
       result['generation_id'].is_a?(String) && !result['generation_id'].empty? &&
       result['hits'].is_a?(Array) && result['hits'].length <= top_k &&
@@ -77,6 +77,21 @@ class RetrievalClient
   end
 
   private
+
+  def timed_transport(payload, headers, path: nil)
+    operation = lambda do
+      @transport ? @transport.call(payload, headers) : perform(payload, headers, path: path)
+    end
+    if AiTelemetry.current
+      AiTelemetry.measure('transport') { operation.call }
+    else
+      ctx = AiTelemetry.context(request_id: headers.fetch('X-Request-Id'),
+        traceparent: headers.fetch('traceparent'))
+      AiTelemetry.span('rails.transport', context: ctx, stage: 'transport') do
+        operation.call
+      end
+    end
+  end
 
   def perform(payload, headers, path: nil)
     uri = URI(@url.to_s)

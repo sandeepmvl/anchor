@@ -145,10 +145,16 @@ class Span:
 
 @contextmanager
 def span(name, ctx=None, **fields):
+    # Summary events emitted after work must not impersonate retrieval timers.
+    timing_name = {'tool': 'tool', 'llm': 'model', 'retrieval': 'retrieval'}.get(
+        fields.get('stage'), 'application')
+    if name == 'python.dense_rag':
+        timing_name = 'application'
     item = Span(name, ctx, **fields)
     token = CURRENT.set(item)
     try:
-        yield item
+        with segment(timing_name):
+            yield item
     except BaseException as error:
         item.fail(getattr(error, 'code', 'internal_error'), getattr(error, 'status', None))
         raise
@@ -189,7 +195,6 @@ AGENT_SUMMARIES = {
 
 FIELDS.update({'query_fingerprint', 'duplicate_query', 'new_chunk_ids',
                'seen_chunk_ids', 'hops_remaining'})
-
 
 FIELDS.add('tool_call_fingerprint')
 TOOL_ERRORS = {'unknown_tool', 'invalid_json', 'invalid_arguments', 'execution_error'}
@@ -249,7 +254,6 @@ FIELDS.update({'execution_mode', 'task_id', 'call_id', 'interop_protocol',
                'permission_decision', 'permission_reason'})
 ERRORS.add('delegation_rejected')
 ERRORS.add('orchestration_not_configured')
-
 
 TRAJECTORY_TOOLS = {'none', 'retrieve', 'lookup_order', 'check_refund', 'issue_refund'}
 TRAJECTORY_CLAIMS = {'intake', 'evidence_available', 'observed_answer', 'human_handoff'}
@@ -311,3 +315,239 @@ def realtime_event(session, scope, event, epoch, queue_depth, **fields):
     return dict(event=event, t=time.monotonic(), trace_id=session,
                 tenant_id=scope['tenant_id'], ticket_id=scope['ticket_id'],
                 epoch=epoch, queue_depth=queue_depth, **fields)
+
+
+# Bounded local-clock latency trees. Never retain prompts or tool arguments.
+import math
+import threading
+from pathlib import Path
+import yaml
+
+ACTIVE = contextvars.ContextVar('anchor_latency_profile', default=None)
+PARENT = contextvars.ContextVar('anchor_latency_parent', default=None)
+NAMES = {'request', 'application', 'retrieval', 'branch', 'embedding', 'search',
+         'rerank', 'model', 'tool', 'transport', 'retry_wait'}
+MAX_SPANS = 256
+MAX_TEXT_EVENTS = 128
+
+
+def union(intervals):
+    end = None
+    total = 0.0
+    for start, stop in sorted(intervals):
+        if stop < start:
+            raise ValueError('negative_interval')
+        if end is None or start > end:
+            total += stop - start
+        elif stop > end:
+            total += stop - end
+        end = stop if end is None else max(end, stop)
+    return total
+
+
+class Profile:
+    def __init__(self, trace_id=None, clock=time.perf_counter):
+        self.trace_id = trace_id or uuid.uuid4().hex
+        if (not isinstance(self.trace_id, str) or len(self.trace_id) != 32
+                or any(c not in '0123456789abcdef' for c in self.trace_id)
+                or int(self.trace_id, 16) == 0):
+            raise ValueError('invalid_trace_id')
+        self.clock = clock
+        self.origin = clock()
+        self.nodes = []
+        self.lock = threading.Lock()
+        self.closed = False
+        self.truncated = False
+
+    @contextmanager
+    def activate(self):
+        active = ACTIVE.set(self)
+        parent = PARENT.set(None)
+        try:
+            yield self
+        finally:
+            PARENT.reset(parent)
+            ACTIVE.reset(active)
+
+    @contextmanager
+    def span(self, name):
+        if name not in NAMES:
+            raise ValueError('unsafe_span_name')
+        with self.lock:
+            retained = not self.closed and len(self.nodes) < MAX_SPANS
+            if not retained:
+                self.truncated = True
+            node = {'id': len(self.nodes) if retained else None,
+                    'parent': PARENT.get(), 'name': name,
+                    'start': self.clock() - self.origin, 'end': None,
+                    'round_trips': 0, 'text_events': [], 'cached_tokens': None,
+                    'injected_inference_ms': None, 'status': 'ok',
+                    'text_events_truncated': False}
+            if retained:
+                self.nodes.append(node)
+        # A dropped span's retained descendants remain attached to its parent.
+        parent = PARENT.set(node['id'] if retained else PARENT.get())
+        try:
+            yield node
+        except BaseException:
+            with self.lock:
+                node['status'] = 'error'
+            raise
+        finally:
+            with self.lock:
+                node['end'] = self.clock() - self.origin
+                if retained and node['parent'] is None:
+                    self.closed = True
+            PARENT.reset(parent)
+
+    def text(self, node):
+        """Timestamp observed text events; never store their content."""
+        with self.lock:
+            if self.closed or node['id'] is None:
+                return
+            if len(node['text_events']) < MAX_TEXT_EVENTS:
+                node['text_events'].append(self.clock() - self.origin)
+            else:
+                node['text_events_truncated'] = True
+                self.truncated = True
+
+    def report(self):
+        # Snapshot under a short lock. Never join threads or wait for work here.
+        with self.lock:
+            nodes = [dict(n, text_events=list(n['text_events'])) for n in self.nodes]
+            truncated = self.truncated
+        roots = [n for n in nodes if n['parent'] is None]
+        if len(roots) != 1:
+            raise ValueError('one_request_root_required')
+        if roots[0]['end'] is None:
+            raise ValueError('unfinished_span')
+        by_id = {n['id']: n for n in nodes}
+        bounds = {}
+        incomplete = False
+        for node in nodes:
+            parent = bounds.get(node['parent'])
+            left = node['start']
+            right = node['end']
+            if parent is not None:
+                left = min(max(left, parent[0]), parent[1])
+                right = parent[1] if right is None else min(right, parent[1])
+            elif node['parent'] is not None:
+                raise ValueError('invalid_parent')
+            if right is None or right < left:
+                raise ValueError('negative_interval')
+            clipped = node['end'] is None or (left, right) != (node['start'], node['end'])
+            incomplete = incomplete or clipped
+            bounds[node['id']] = (left, right, clipped)
+        children = {n['id']: [] for n in nodes}
+        for node in nodes:
+            if node['parent'] in by_id:
+                children[node['parent']].append(bounds[node['id']][:2])
+        rows = []
+        for node in nodes:
+            left, right, clipped = bounds[node['id']]
+            inclusive = right - left
+            exclusive = inclusive - union(children[node['id']])
+            events = [t for t in node['text_events'] if left <= t <= right]
+            rows.append({
+                'trace_id': self.trace_id, 'id': node['id'],
+                'parent': node['parent'], 'name': node['name'],
+                'start_ms': left * 1000, 'inclusive_ms': inclusive * 1000,
+                'exclusive_ms': max(0.0, exclusive) * 1000,
+                'status': node['status'], 'interval_clipped': clipped,
+                'round_trips': node['round_trips'],
+                'ttft_ms': (events[0] - node['start']) * 1000 if events else None,
+                'inter_token_span_ms': (events[-1] - events[0]) * 1000 if events else None,
+                'text_event_gaps_ms': [(b - a) * 1000 for a, b in zip(events, events[1:])],
+                'text_events_truncated': node['text_events_truncated'],
+                'cached_tokens': node['cached_tokens'],
+                'injected_inference_ms': node['injected_inference_ms'],
+            })
+        root = next(r for r in rows if r['parent'] is None)
+        return {'trace_id': self.trace_id, 'total_ms': root['inclusive_ms'],
+                'application_remainder_ms': root['exclusive_ms'],
+                'round_trips': sum(r['round_trips'] for r in rows),
+                'incomplete': incomplete, 'truncated': truncated, 'spans': rows}
+
+
+@contextmanager
+def segment(name):
+    profile = ACTIVE.get()
+    if profile is None:
+        yield None
+    else:
+        with profile.span(name) as node:
+            yield node
+
+
+async def model_call(call, *args, **kwargs):
+    """Count logical client invocations, not hidden provider retry attempts."""
+    with segment('model') as node:
+        if node is not None:
+            node['round_trips'] = 1
+        return await call(*args, **kwargs)
+
+
+def distribution(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+    return {name: ordered[math.ceil(len(ordered) * p) - 1]
+            for name, p in [('p50', .50), ('p95', .95), ('p99', .99)]}
+
+
+def configuration(path='config/performance.yml'):
+    config = yaml.safe_load(Path(path).read_text())['profiling']
+    if (type(config.get('enabled')) is not bool
+            or config.get('record_content') is not False
+            or config.get('percentile') != 'nearest_rank'
+            or type(config.get('samples')) is not int
+            or config['samples'] != 20
+            or not 0 < config.get('remainder_limit', 0) <= .10):
+        raise ValueError('unsafe_performance_configuration')
+    return config
+
+
+class LatencyBoundary:
+    """ASGI boundary; elapsed server time is not customer delivery time."""
+    def __init__(self, app, enabled=None, sink=None):
+        self.application = app
+        self.enabled = enabled
+        self.sink = sink
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.application(scope, receive, send)
+        enabled = configuration()['enabled'] if self.enabled is None else self.enabled
+        if not enabled:
+            return await self.application(scope, receive, send)
+        headers = {k.decode('latin1'): v.decode('latin1')
+                   for k, v in scope.get('headers', [])}
+        ctx = context(headers)
+        if ctx['parent_span_id'] is None:
+            headers['traceparent'] = '00-' + ctx['trace_id'] + '-' + uuid.uuid4().hex[:16] + '-01'
+        scope = dict(scope, headers=[(k.encode('latin1'), v.encode('latin1'))
+                                    for k, v in headers.items()])
+        profile = Profile(ctx['trace_id'])
+        finished = False
+
+        async def timed_send(message):
+            nonlocal finished
+            await send(message)
+            if message['type'] == 'http.response.body' and not message.get('more_body', False):
+                finished = True
+
+        try:
+            with profile.activate():
+                with profile.span('request'):
+                    await self.application(scope, receive, timed_send)
+        finally:
+            report = profile.report()
+            report['response_completed'] = finished
+            report['scope'] = 'python_asgi_not_ingress_or_client_delivery'
+            # Keep the legacy SINK stream compatible with span consumers.
+            # Full waterfalls go to the dedicated sink or structured logger.
+            record = {'event': 'latency_profile', 'name': 'python.latency_profile', **report}
+            if self.sink is not None:
+                self.sink(record)
+            else:
+                LOGGER.info(json.dumps(record, separators=(',', ':')))

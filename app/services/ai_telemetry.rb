@@ -20,6 +20,7 @@ class AiTelemetry
     def sink
       @sink ||= ->(record) { $stdout.puts(JSON.generate(record)) }
     end
+
     def realtime_issuance(status:)
       raise ArgumentError, 'invalid_realtime_status' unless %w[issued denied].include?(status)
       sink.call(event: 'anchor.realtime.issuance', status: status)
@@ -59,18 +60,30 @@ class AiTelemetry
       ensure
         Thread.current[:anchor_ai_span] = previous
         item.finish
+        previous.add_child(item.interval) if previous && item.record[:parent_span_id] == previous.record[:span_id]
+      end
+    end
+
+    def measure(name)
+      raise ArgumentError, 'unsafe_segment' unless %w[model retrieval transport tool].include?(name)
+      span("rails.#{name}", stage: name) do |item|
+        ActiveSupport::Notifications.instrument('anchor.latency.segment',
+          item.record.slice(:trace_id, :span_id, :parent_span_id, :request_id).merge(segment: name)) do
+          yield item
+        end
       end
     end
   end
 
   class Span
-    attr_reader :record
+    attr_reader :record, :interval
 
     def initialize(name, context, **fields)
       @record = { event: 'span', name: name, **context, span_id: SecureRandom.hex(8),
         started_at: Time.now.utc.iso8601(3), status: 'ok', error_type: nil,
         error_message: nil, tokens: nil, cost_estimate: nil }
       @started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @children = []
       set(**fields)
     end
 
@@ -93,12 +106,34 @@ class AiTelemetry
       @record.merge!(status: 'error', error_type: code, error_message: code, status_code: status)
     end
 
+    def add_child(interval)
+      @children << interval
+    end
+
     def finish
+      finished = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @interval = [@started, finished]
+      covered = 0.0
+      edge = @started
+      @children.sort.each do |left, right|
+        left = [left, @started, edge].max
+        right = [right, finished].min
+        covered += [right - left, 0].max
+        edge = [edge, right].max
+      end
+      elapsed = finished - @started
       @record.merge!(ended_at: Time.now.utc.iso8601(3),
-        latency_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started) * 1000).round(3))
+        latency_ms: (elapsed * 1000).round(3),
+        inclusive_ms: elapsed * 1000,
+        exclusive_ms: [elapsed - covered, 0].max * 1000)
       AiTelemetry.sink.call(@record.dup)
     end
   end
+end
+
+ActiveSupport::Notifications.monotonic_subscribe('anchor.latency.segment') do |_name, started, finished, _id, payload|
+  AiTelemetry.sink.call({event: 'anchor.latency.segment', duration_ms: (finished - started) * 1000}.merge(
+    payload.slice(:trace_id, :span_id, :parent_span_id, :request_id, :segment)))
 end
 
 ActiveSupport::Notifications.subscribe('anchor.attachment.process') do |*args|

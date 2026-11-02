@@ -57,6 +57,8 @@ async def lifespan(application):
 
 app = FastAPI(lifespan=lifespan)
 router = APIRouter(prefix='/v1')
+from anchor_ai.observability import LatencyBoundary, model_call
+app.add_middleware(LatencyBoundary)
 
 
 @app.post('/v1/agent')
@@ -124,7 +126,7 @@ async def infer(
         raise HTTPException(status_code=401, detail='service_auth_failed')
     item.set(stage='provider')
     try:
-        return await LlmClient().complete_result(body.message)
+        return await model_call(LlmClient().complete_result, body.message)
     except ProviderError as error:
         item.fail(error.code, error.status)
         raise HTTPException(status_code=error.status, detail=error.detail()) from None
@@ -441,6 +443,7 @@ async def chain_reply(
     request: Request,
     x_anchor_secret: Annotated[str | None, Header()] = None,
 ):
+    from anchor_ai.prompts import RegistryLookupError
     item = request.state.telemetry
     item.set(stage='auth', tenant_id=body.tenant_id, conversation_id=body.conversation_id)
     expected = os.environ.get('ANCHOR_AI_SECRET')

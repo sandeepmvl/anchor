@@ -48,9 +48,11 @@ def isolated_framework_test(test):
                 failure = reader.recv()
             except EOFError:
                 pytest.fail('Query-engine child exited before reporting its result')
+            # Receiving a result precedes interpreter/framework shutdown.
+            # Bound that separate phase without accepting a still-running child.
             process.join(15)
             assert failure is None, failure
-            assert process.exitcode == 0
+            assert process.exitcode == 0, 'Query-engine child did not exit cleanly after reporting'
         finally:
             reader.close()
             if process.is_alive():
